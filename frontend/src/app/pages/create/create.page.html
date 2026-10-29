@@ -1,0 +1,239 @@
+<h1>Create today's slides</h1>
+<p class="lead">Pick a style, tell us what goes on each page, and attach any pictures. We'll build the deck in your style.</p>
+
+@if (error(); as message) {
+  <div class="alert alert-error" role="alert">{{ message }}</div>
+}
+
+<!-- ============ 1. Style ============ -->
+<section class="card section">
+  <div class="section-head">
+    <span class="section-num">1</span>
+    <div>
+      <h2>Choose a style</h2>
+      <p class="muted small">The new slides will look like these samples.</p>
+    </div>
+  </div>
+
+  @if (!stylesLoaded()) {
+    <p class="muted">Loading your styles…</p>
+  } @else if (styles().length === 0) {
+    <div class="empty">
+      You haven't added a style yet.
+      <p style="margin-top: 12px"><a class="btn btn-primary" routerLink="/styles">Upload sample slides</a></p>
+    </div>
+  } @else {
+    <div class="picks" role="radiogroup" aria-label="Slide style">
+      @for (s of styles(); track s.id) {
+        <button
+          type="button"
+          class="pick"
+          role="radio"
+          [attr.aria-checked]="styleId() === s.id"
+          [class.selected]="styleId() === s.id"
+          (click)="styleId.set(s.id)"
+        >
+          <span class="pick-thumb" [style.background]="'#' + (s.profile.palette[0] || '0f766e')">
+            @if (s.previews.length) {
+              <img [src]="s.previews[0]" alt="" loading="lazy" />
+            }
+          </span>
+          <span class="pick-name">{{ s.name }}</span>
+        </button>
+      }
+    </div>
+  }
+</section>
+
+<!-- ============ 2. Details ============ -->
+<section class="card section">
+  <div class="section-head">
+    <span class="section-num">2</span>
+    <div>
+      <h2>About this lesson</h2>
+      <p class="muted small">Optional, but it helps the AI pitch the wording at the right level.</p>
+    </div>
+  </div>
+  <div class="stack">
+    <label class="field">
+      Deck title
+      <input class="input" [(ngModel)]="title" maxlength="200" placeholder="e.g. Cells and Photosynthesis" />
+    </label>
+    <div class="two">
+      <label class="field">
+        Subject / year group
+        <input class="input" [(ngModel)]="topic" maxlength="500" placeholder="e.g. Year 9 Biology, starter lesson" />
+      </label>
+      <label class="field">
+        Anything else? <span class="hint">(optional)</span>
+        <input class="input" [(ngModel)]="instructions" maxlength="2000" placeholder="e.g. Keep sentences short, British spelling" />
+      </label>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3. Slides ============ -->
+<section class="card section">
+  <div class="section-head">
+    <span class="section-num">3</span>
+    <div>
+      <h2>What goes on each slide?</h2>
+      <p class="muted small">Write rough notes for each page number. Attach a picture to any page that needs one.</p>
+    </div>
+  </div>
+
+  <div class="slides">
+    @for (row of rows(); track row.key) {
+      <div class="slide-row">
+        <label class="page-no">
+          <span class="muted small">Page</span>
+          <input
+            class="input"
+            type="number"
+            min="1"
+            inputmode="numeric"
+            [value]="row.page || ''"
+            (input)="setPage(row.key, $any($event.target).value)"
+            [attr.aria-label]="'Page number for slide ' + $index"
+          />
+        </label>
+
+        <div class="slide-main">
+          <textarea
+            class="input"
+            rows="3"
+            maxlength="4000"
+            [ngModel]="row.details"
+            (ngModelChange)="patch(row.key, { details: $event })"
+            placeholder="e.g. Intro to photosynthesis. Plants make food from sunlight. Needs water + CO₂. Ask: where does it happen?"
+            [attr.aria-label]="'Details for page ' + row.page"
+          ></textarea>
+
+          <div class="attach">
+            <input #file type="file" accept="image/*" hidden (change)="attach(row.key, $event)" />
+            @if (row.image; as img) {
+              <span class="attached">
+                <img [src]="img.url" alt="" />
+                <span class="small">{{ img.filename }}</span>
+                <button type="button" class="btn btn-icon" aria-label="Remove image" (click)="detachImage(row.key)">✕</button>
+              </span>
+            } @else if (row.uploading) {
+              <span class="small muted"><span class="spinner"></span> Uploading…</span>
+            } @else {
+              <button type="button" class="btn btn-sm" (click)="file.click()">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                Add picture
+              </button>
+            }
+            @if (row.error) {
+              <span class="small err">{{ row.error }}</span>
+            }
+          </div>
+        </div>
+
+        <button type="button" class="btn btn-icon" aria-label="Delete this slide" (click)="removeRow(row.key)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14"/></svg>
+        </button>
+      </div>
+    }
+  </div>
+
+  @if (pageProblem(); as problem) {
+    <p class="small err" role="alert" style="margin-top: 10px">{{ problem }}</p>
+  }
+
+  <button type="button" class="btn" style="margin-top: 14px" (click)="addRow()">+ Add another slide</button>
+</section>
+
+<!-- ============ Submit ============ -->
+<div class="submit">
+  <button type="button" class="btn btn-primary btn-lg" [disabled]="!canSubmit()" (click)="generate()">
+    @if (generating()) {
+      <span class="spinner"></span> Building your slides…
+    } @else {
+      Generate {{ filledRows().length || '' }} {{ filledRows().length === 1 ? 'slide' : 'slides' }}
+    }
+  </button>
+  @if (generating()) {
+    <span class="muted small">This usually takes 10–30 seconds.</span>
+  } @else if (!styleId()) {
+    <span class="muted small">Choose a style first.</span>
+  } @else if (filledRows().length === 0) {
+    <span class="muted small">Add some notes to at least one slide.</span>
+  }
+</div>
+
+<!-- ============ Result ============ -->
+@if (result(); as r) {
+  <section id="result" class="card section result">
+    <div class="result-head">
+      <div>
+        <h2>{{ r.title }}</h2>
+        <p class="muted small">
+          {{ r.slides.length }} {{ r.slides.length === 1 ? 'slide' : 'slides' }}
+          @if (r.mode === 'ai') {
+            <span class="badge badge-ai">Written with AI</span>
+          } @else {
+            <span class="badge" title="No AI key configured: slides use your notes as typed">Demo mode</span>
+          }
+        </p>
+      </div>
+      <div class="row">
+        <button type="button" class="btn" (click)="newDeck()">Start a new deck</button>
+        <a class="btn btn-primary" [href]="r.download_url" download>Download .pptx</a>
+      </div>
+    </div>
+
+    @if (r.warnings.length) {
+      <div class="alert alert-warn" role="status">
+        Heads up:
+        <ul>
+          @for (w of r.warnings; track w) {
+            <li>{{ w }}</li>
+          }
+        </ul>
+      </div>
+    }
+
+    @if (r.previews.length) {
+      <div class="previews">
+        @for (src of r.previews; track src; let i = $index) {
+          <figure>
+            <img [src]="src" [alt]="'Slide ' + (i + 1) + ' preview'" loading="lazy" />
+            <figcaption class="small muted">{{ r.slides[i]?.page ? 'Page ' + r.slides[i].page : '' }}</figcaption>
+          </figure>
+        }
+      </div>
+    } @else if (r.preview_status === 'pending') {
+      <p class="muted small"><span class="spinner"></span> Rendering previews… you can already download the file.</p>
+    } @else if (r.preview_status === 'unavailable') {
+      <p class="muted small">Previews need LibreOffice installed on the server. The download works without it.</p>
+    }
+
+    <details class="outline">
+      <summary>See the text on each slide</summary>
+      @for (s of r.slides; track s.page) {
+        <div class="outline-item">
+          <div class="row">
+            <span class="badge">Page {{ s.page }}</span>
+            <span class="badge">{{ s.kind }}</span>
+            <strong>{{ s.title }}</strong>
+          </div>
+          @if (s.subtitle) {
+            <p class="muted small">{{ s.subtitle }}</p>
+          }
+          @if (s.bullets.length) {
+            <ul>
+              @for (b of s.bullets; track $index) {
+                <li>{{ b }}</li>
+              }
+            </ul>
+          }
+          @if (s.notes) {
+            <p class="small muted"><em>Speaker notes:</em> {{ s.notes }}</p>
+          }
+        </div>
+      }
+    </details>
+  </section>
+}

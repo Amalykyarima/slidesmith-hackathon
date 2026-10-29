@@ -1,0 +1,35 @@
+.picks { display: flex; gap: 14px; overflow-x: auto; padding: 4px 2px 8px; }
+.pick {
+  flex: none; width: 190px; padding: 8px; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: #fff; border: 2px solid var(--border); border-radius: 10px;
+}
+.pick:hover { border-color: #b6c2cf; }
+.pick.selected { border-color: var(--primary); background: var(--primary-soft); }
+.pick-thumb { display: block; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+.pick-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pick-name { display: block; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 720px) { .two { grid-template-columns: 1fr; } }
+
+.slides { display: flex; flex-direction: column; gap: 14px; }
+.slide-row { display: flex; gap: 12px; align-items: flex-start; padding: 14px; background: var(--bg); border-radius: 10px; }
+.page-no { display: flex; flex-direction: column; gap: 4px; width: 72px; flex: none; }
+.slide-main { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.attach { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.attached { display: inline-flex; align-items: center; gap: 8px; padding: 4px 4px 4px 4px; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
+.attached img { width: 44px; height: 32px; object-fit: cover; border-radius: 4px; }
+.attached .small { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.err { color: var(--danger); }
+
+.submit { display: flex; align-items: center; gap: 16px; margin: 4px 0 28px; flex-wrap: wrap; }
+
+.result-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin: 16px 0; }
+.previews figure { margin: 0; }
+.previews img { width: 100%; display: block; border-radius: 8px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+.previews figcaption { margin-top: 4px; text-align: center; }
+.outline { margin-top: 12px; }
+.outline summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+.outline-item { padding: 10px 0; border-top: 1px solid var(--border); }
+.outline-item ul { margin: 6px 0 4px; padding-left: 20px; }

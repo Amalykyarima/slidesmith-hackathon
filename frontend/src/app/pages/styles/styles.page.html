@@ -1,0 +1,105 @@
+<h1>Your slide styles</h1>
+<p class="lead">
+  Upload a few of your own slide decks. SlideSmith reuses their fonts, colours, backgrounds and layouts for every new
+  deck. Add as many styles as you like and remove them whenever you want.
+</p>
+
+@if (error(); as message) {
+  <div class="alert alert-error" role="alert">{{ message }}</div>
+}
+
+<div
+  class="dropzone card"
+  [class.over]="dragOver()"
+  tabindex="0"
+  role="button"
+  aria-label="Upload sample slide decks"
+  (click)="picker.click()"
+  (keydown.enter)="picker.click()"
+  (keydown.space)="picker.click(); $event.preventDefault()"
+  (dragover)="onDragOver($event)"
+  (dragleave)="dragOver.set(false)"
+  (drop)="onDrop($event)"
+>
+  <input #picker type="file" accept=".pptx" multiple hidden (change)="onPick($event)" />
+  <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+  <strong>Drop PowerPoint files here, or click to browse</strong>
+  <span class="muted small">.pptx only · tip: include a title slide, a bullet slide and a slide with a picture</span>
+</div>
+
+@for (name of uploading(); track $index) {
+  <div class="uploading card"><span class="spinner"></span> Reading <strong>{{ name }}</strong>…</div>
+}
+
+@if (loading()) {
+  <p class="muted" style="margin-top: 24px">Loading…</p>
+} @else if (styles().length === 0 && uploading().length === 0) {
+  <div class="empty" style="margin-top: 24px">
+    No styles yet. Upload your first sample deck above to get started.
+  </div>
+} @else {
+  <div class="grid">
+    @for (style of styles(); track style.id) {
+      <article class="style card">
+        <div class="thumb" [style.aspect-ratio]="ratio(style)" [style.background]="gradient(style)">
+          @if (style.previews.length) {
+            <img [src]="style.previews[0]" [alt]="'First slide of ' + style.name" loading="lazy" />
+          } @else if (style.preview_status === 'pending') {
+            <span class="thumb-note"><span class="spinner"></span> Preparing preview…</span>
+          } @else {
+            <span class="thumb-note">No preview</span>
+          }
+        </div>
+
+        <div class="body">
+          @if (editingId() === style.id) {
+            <input
+              #nameInput
+              class="input"
+              [value]="style.name"
+              maxlength="80"
+              aria-label="Style name"
+              (keydown.enter)="commitRename(style, nameInput.value)"
+              (keydown.escape)="editingId.set(null)"
+              (blur)="commitRename(style, nameInput.value)"
+              autofocus
+            />
+          } @else {
+            <div class="title-row">
+              <h3 [title]="style.filename">{{ style.name }}</h3>
+              <button class="btn btn-icon" type="button" aria-label="Rename" (click)="editingId.set(style.id)">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+              </button>
+            </div>
+          }
+
+          <p class="muted small">
+            {{ style.profile.slide_count }} sample {{ style.profile.slide_count === 1 ? 'slide' : 'slides' }} ·
+            {{ style.profile.background_tone }} background
+          </p>
+
+          <div class="swatches" aria-label="Colour palette">
+            @for (c of style.profile.palette; track c) {
+              <span class="swatch" [style.background]="hex(c)" [title]="hex(c)"></span>
+            }
+          </div>
+
+          @if (style.profile.fonts.length) {
+            <p class="small"><span class="muted">Fonts:</span> {{ style.profile.fonts.join(', ') }}</p>
+          }
+
+          <div class="chips">
+            @for (k of kinds(style); track k) {
+              <span class="badge">{{ k }}</span>
+            }
+          </div>
+
+          <div class="actions">
+            <a class="btn btn-sm btn-primary" routerLink="/create" [queryParams]="{ style: style.id }">Use this style</a>
+            <button class="btn btn-sm btn-danger" type="button" (click)="remove(style)">Remove</button>
+          </div>
+        </div>
+      </article>
+    }
+  </div>
+}

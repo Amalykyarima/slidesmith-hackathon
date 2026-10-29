@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.angular/
+.venv/
+__pycache__/
+backend/storage/
+backend/.env
+backend/tests/out/
+
+# stray generated test outputs
+backend/tests/out_*.pptx
+.pytest_cache/
