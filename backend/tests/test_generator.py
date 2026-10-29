@@ -315,3 +315,13 @@ def test_blank_layouts_are_empty_but_keep_the_design(tmp_path):
     text = " ".join(sh.text_frame.text for slide in prs.slides for sh in slide.shapes if sh.has_text_frame)
     assert not text.strip(), f"sample text left on the blank template: {text!r}"
     assert not any(sh.shape_type == MSO_SHAPE_TYPE.PICTURE for slide in prs.slides for sh in slide.shapes)
+
+
+def test_box_shorter_than_its_own_text_still_fits_one_line():
+    from types import SimpleNamespace
+
+    from app.generator import _fit_pt
+
+    label = SimpleNamespace(width=Inches(7), height=Inches(0.34))  # 28pt text in a 0.34" box
+    assert _fit_pt(label, ["Cells"], 28, 24) == (28, True)
+    assert _fit_pt(label, ["A much longer title that needs two lines in this box, surely"], 28, 24)[1] is False

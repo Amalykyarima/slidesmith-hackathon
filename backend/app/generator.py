@@ -230,6 +230,8 @@ def _fit_pt(shape, lines: list[str], base_pt: float, min_pt: float, indent_pt: f
     height = (shape.height or 0) / EMU_PER_PT - 7.2
     if width <= 0 or height <= 0:
         return base_pt, True
+    # Some designs use a box shorter than one line of their own text: it's meant to grow.
+    height = max(height, base_pt * 1.2)
     pt = base_pt
     while True:
         if _estimate_height(lines, pt, width) <= height:
