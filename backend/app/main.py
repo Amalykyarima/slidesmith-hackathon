@@ -312,6 +312,9 @@ def rebuild_generation(gen_id: str, body: RebuildRequest, background: Background
     if not style:
         raise HTTPException(404, "The style these slides used was deleted, so they can't be rebuilt.")
     req = GenerateRequest.model_validate(db.loads(row["request"]))
+    cover = next((s for s in body.slides if s.page == 0), None)
+    if cover and cover.title.strip():
+        req = req.model_copy(update={"title": cover.title.strip()})  # the edited cover names the deck
 
     known = {s.page for s in req.slides} | ({0} if req.cover else set())
     pages = [s.page for s in body.slides]

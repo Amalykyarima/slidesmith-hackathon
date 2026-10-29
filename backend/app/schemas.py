@@ -30,7 +30,7 @@ class GenerateRequest(BaseModel):
 class TextRun(BaseModel):
     """A stretch of text with the teacher's formatting. Unset fields keep the template's style."""
 
-    text: str = Field(max_length=2000)
+    text: str = Field(max_length=10000)
     bold: bool | None = None  # None: as the template has it
     italic: bool | None = None
     underline: bool | None = None

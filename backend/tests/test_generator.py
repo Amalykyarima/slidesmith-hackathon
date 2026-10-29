@@ -293,3 +293,12 @@ def test_designed_template_keeps_cover_art_off_content_slides():
         assert "OLD" not in text and f"New title {n}" in text and "Private & Confidential" in text
         leftovers = [sh.shape_type for sh in slide.shapes if sh.shape_type in (MSO_SHAPE_TYPE.AUTO_SHAPE, MSO_SHAPE_TYPE.PICTURE)]
         assert not leftovers, f"slide {n} kept sample decoration: {leftovers}"
+
+
+def test_very_long_line_still_builds(tmp_path):
+    """A paragraph of notes with no sentence breaks becomes one long bullet: warn, don't crash."""
+    out = tmp_path / "long.pptx"
+    warnings = build_deck(FIX / "biology_dark.pptx", [SlideContent(page=1, title="Long", bullets=["word " * 600])], {}, out)
+    assert any("overflow" in w for w in warnings)
+    slide = Presentation(str(out)).slides[0]
+    assert any("word word" in sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)

@@ -124,7 +124,7 @@
       <div
         class="slide-row"
         [class.dragging]="dragKey() === row.key"
-        (dragover)="$event.preventDefault()"
+        (dragover)="dragKey() !== null && $event.preventDefault()"
         (drop)="dropOn(i, $event)"
       >
         <div class="order">

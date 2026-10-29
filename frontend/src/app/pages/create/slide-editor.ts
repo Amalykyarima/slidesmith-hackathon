@@ -1,4 +1,4 @@
-import { Component, inject, input, linkedSignal, output, signal } from '@angular/core';
+import { Component, inject, input, linkedSignal, output, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
@@ -172,9 +172,15 @@ export class SlideEditor {
   protected readonly aligns = ALIGNS;
   protected readonly anchors = ANCHORS;
 
-  /** Working copy of the slides; starts again from each new generation. */
-  protected readonly edits = linkedSignal<SlideContent[]>(() => structuredClone(this.generation().slides));
-  protected readonly dirty = linkedSignal<boolean>(() => (this.generation(), false));
+  /**
+   * Working copy of the slides. It starts again only when a different deck arrives (a rebuild),
+   * not when the same deck is re-fetched while its previews render.
+   */
+  protected readonly edits = linkedSignal<string, SlideContent[]>({
+    source: () => this.generation().id,
+    computation: () => structuredClone(untracked(this.generation).slides),
+  });
+  protected readonly dirty = linkedSignal<string, boolean>({ source: () => this.generation().id, computation: () => false });
   protected readonly rebuilding = signal(false);
   protected readonly error = signal<string | null>(null);
 

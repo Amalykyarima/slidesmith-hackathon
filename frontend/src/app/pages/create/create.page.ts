@@ -165,9 +165,10 @@ export class CreatePage {
   }
 
   protected dropOn(index: number, event: DragEvent): void {
-    event.preventDefault();
     const key = this.dragKey();
-    if (key !== null) this.moveRow(key, index);
+    if (key === null) return; // text dropped into a field: leave it to the browser
+    event.preventDefault();
+    this.moveRow(key, index);
     this.dragKey.set(null);
   }
 
