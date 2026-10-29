@@ -180,9 +180,29 @@ def dressed_deck():
     prs.save(OUT / "dressed.pptx")
 
 
+def inherited_deck():
+    """The cover title is white and bold only because its layout placeholder says so; the master says black."""
+    from lxml import etree
+    from pptx.oxml.ns import qn
+
+    prs = Presentation()
+    layout = prs.slide_layouts[0]
+    title_ph = next(ph for ph in layout.placeholders if ph.placeholder_format.idx == 0)
+    body = title_ph._element.txBody
+    lst = body.find(qn("a:lstStyle"))
+    lvl1 = etree.SubElement(lst, qn("a:lvl1pPr"))
+    defrpr = etree.SubElement(lvl1, qn("a:defRPr"), b="1")
+    etree.SubElement(etree.SubElement(defrpr, qn("a:solidFill")), qn("a:srgbClr"), val="FFFFFF")
+    s = prs.slides.add_slide(layout)
+    s.shapes.title.text = "Space Week"
+    s.placeholders[1].text = "Year 7 Physics"
+    prs.save(OUT / "inherited.pptx")
+
+
 if __name__ == "__main__":
     textbox_deck()
     placeholder_deck()
     leftovers_deck()
     dressed_deck()
     print("fixtures written to", OUT)
+    inherited_deck()

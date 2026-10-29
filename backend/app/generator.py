@@ -24,6 +24,7 @@ from pptx.util import Emu
 from .pptx_analysis import (
     EMU_PER_PT,
     SlideInfo,
+    _ph_type,
     _theme_colors_and_fonts,
     analyze_presentation,
     resolve_pt,
@@ -630,26 +631,43 @@ def _color_of(node, theme_colors: dict[str, str]) -> str | None:
     return None
 
 
+def _defaults_chain(shape, slide, is_title: bool) -> list:
+    """Where a run's unset formatting comes from: the shape, its layout and master placeholders, the master."""
+    lvl1 = f"{qn('a:lvl1pPr')}/{qn('a:defRPr')}"
+    chain = [shape.text_frame._txBody.find(f"{qn('a:lstStyle')}/{lvl1}")]
+    if shape.is_placeholder:
+        layout = slide.slide_layout
+        idx, kind = shape.placeholder_format.idx, _ph_type(shape)
+        for ph in layout.placeholders:
+            if ph.placeholder_format.idx == idx:
+                chain.append(ph._element.find(f".//{qn('a:lstStyle')}/{lvl1}"))
+        for ph in layout.slide_master.placeholders:
+            if ph.placeholder_format.type == kind:
+                chain.append(ph._element.find(f".//{qn('a:lstStyle')}/{lvl1}"))
+        styles = layout.slide_master._element.find(qn("p:txStyles"))
+        if styles is not None:
+            chain.append(styles.find(f"{qn('p:titleStyle' if is_title else 'p:bodyStyle')}/{lvl1}"))
+    return [node for node in chain if node is not None]
+
+
 def _look(shape, slide, is_title: bool, theme_colors: dict[str, str], theme_fonts: dict[str, str]) -> dict:
     """How the sample's text looks, so the live preview can imitate it. Unknowns stay None."""
     tx = shape.text_frame._txBody
     para = max(tx.findall(qn("a:p")), key=lambda p: len(_para_text(p)), default=None)
-    rpr = para.find(f"{qn('a:r')}/{qn('a:rPr')}") if para is not None else None
+    # The first run with visible text, then everything it inherits from.
+    run = next((r for r in (para.findall(qn("a:r")) if para is not None else []) if (r.findtext(qn("a:t")) or "").strip()), None)
+    rpr = run.find(qn("a:rPr")) if run is not None else None
+    sources = [n for n in (rpr, *_defaults_chain(shape, slide, is_title)) if n is not None]
     look: dict = {"size": resolve_pt(shape, slide, is_title), "bold": None, "italic": None, "color": None, "font": None}
-    if rpr is not None:
+    for node in sources:
         for key, attr in (("bold", "b"), ("italic", "i")):
-            if rpr.get(attr) is not None:
-                look[key] = rpr.get(attr) in ("1", "true")
-        look["color"] = _color_of(rpr, theme_colors)
-        latin = rpr.find(qn("a:latin"))
+            if look[key] is None and node.get(attr) is not None:
+                look[key] = node.get(attr) in ("1", "true")
+        look["color"] = look["color"] or _color_of(node, theme_colors)
+        latin = node.find(qn("a:latin"))
         face = latin.get("typeface") if latin is not None else None
-        if face:
+        if face and not look["font"]:
             look["font"] = theme_fonts.get("heading" if face.startswith("+mj") else "body") if face.startswith("+") else face
-    if look["color"] is None and shape.is_placeholder:
-        styles = slide.slide_layout.slide_master._element.find(qn("p:txStyles"))
-        style = styles.find(qn("p:titleStyle" if is_title else "p:bodyStyle")) if styles is not None else None
-        defrpr = style.find(f"{qn('a:lvl1pPr')}/{qn('a:defRPr')}") if style is not None else None
-        look["color"] = _color_of(defrpr, theme_colors)
     look["font"] = look["font"] or theme_fonts.get("heading" if is_title else "body")
     ppr = para.find(qn("a:pPr")) if para is not None else None
     look["align"] = _ALIGN_NAMES.get(ppr.get("algn")) if ppr is not None else None

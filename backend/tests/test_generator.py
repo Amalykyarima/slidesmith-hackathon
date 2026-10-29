@@ -325,3 +325,9 @@ def test_box_shorter_than_its_own_text_still_fits_one_line():
     label = SimpleNamespace(width=Inches(7), height=Inches(0.34))  # 28pt text in a 0.34" box
     assert _fit_pt(label, ["Cells"], 28, 24) == (28, True)
     assert _fit_pt(label, ["A much longer title that needs two lines in this box, surely"], 28, 24)[1] is False
+
+
+def test_live_preview_look_follows_the_layout_placeholder(tmp_path):
+    layouts = blank_layouts(FIX / "inherited.pptx", tmp_path / "blank.pptx")
+    cover = layouts[0]["title_look"]
+    assert cover["color"] == "#FFFFFF" and cover["bold"] is True, cover
