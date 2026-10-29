@@ -37,7 +37,10 @@ export interface SlideSpec {
 
 export interface GenerateRequest {
   style_id: string;
+  /** Adds a cover slide (title + subtitle, as typed) before the numbered slides. */
+  cover: boolean;
   title: string;
+  subtitle: string;
   topic: string;
   instructions: string;
   slides: SlideSpec[];

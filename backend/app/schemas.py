@@ -16,6 +16,9 @@ class SlideSpec(BaseModel):
 class GenerateRequest(BaseModel):
     style_id: str
     title: str = Field(default="", max_length=200)
+    # Cover slide: built from title + subtitle exactly as typed, ahead of the numbered slides.
+    cover: bool = False
+    subtitle: str = Field(default="", max_length=300)
     topic: str = Field(default="", max_length=500)
     instructions: str = Field(default="", max_length=2000)
     slides: list[SlideSpec] = Field(min_length=1, max_length=40)

@@ -338,7 +338,7 @@ def build_deck(
     noted: set[tuple[str, str]] = set()
 
     for content in contents:
-        label = f"Slide {content.page}"
+        label = "Cover" if content.page == 0 else f"Slide {content.page}"
         image = image_paths.get(content.page)
         kind = "image" if image else content.kind
 

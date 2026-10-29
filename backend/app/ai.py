@@ -87,6 +87,8 @@ def _build_user_content(req: GenerateRequest, images: dict[int, Path], capacity:
         lines.append(f"Topic / lesson context: {req.topic}")
     if req.instructions:
         lines.append(f"Extra instructions from the teacher: {req.instructions}")
+    if req.cover:
+        lines.append('The cover slide is made separately, so do not use kind "title" for any of these pages.')
     lines.append(
         f"Limits for this slide style: max {capacity['max_bullets']} bullets per slide, "
         f"max {capacity['max_words_per_bullet']} words per bullet."
@@ -139,7 +141,9 @@ def _call_claude(req: GenerateRequest, images: dict[int, Path], capacity: dict) 
 # --------------------------------------------------------------------------- #
 # Mock mode (no API key): deterministic, lets you demo the whole flow offline
 # --------------------------------------------------------------------------- #
-def _mock_slide(spec: SlideSpec, position: int, total: int, has_image: bool, deck_title: str) -> SlideContent:
+def _mock_slide(
+    spec: SlideSpec, position: int, total: int, has_image: bool, deck_title: str, has_cover: bool = False
+) -> SlideContent:
     parts = [
         re.sub(r"^[\-\*\u2022\d\.\)\s]+", "", p).strip()
         for p in re.split(r"[\n;]+|(?<=[.!?])\s+", spec.details)
@@ -148,7 +152,7 @@ def _mock_slide(spec: SlideSpec, position: int, total: int, has_image: bool, dec
     parts = [p for p in parts if p]
     if has_image:
         kind = "image"
-    elif position == 0 and total > 1:
+    elif position == 0 and total > 1 and not has_cover:
         kind = "title"
     else:
         kind = "content"
@@ -172,7 +176,7 @@ def generate_content(
     if not config.AI_ENABLED:
         total = len(specs)
         slides = [
-            _mock_slide(s, i, total, s.page in images, req.title) for i, s in enumerate(specs)
+            _mock_slide(s, i, total, s.page in images, req.title, req.cover) for i, s in enumerate(specs)
         ]
         return slides, "mock"
 
@@ -183,6 +187,8 @@ def generate_content(
         slide = produced.get(spec.page)
         if slide is None:
             log.warning("Model skipped page %s; falling back to teacher's raw notes", spec.page)
-            slide = _mock_slide(spec, i, total, spec.page in images, req.title)
+            slide = _mock_slide(spec, i, total, spec.page in images, req.title, req.cover)
+        elif req.cover and slide.kind == "title":
+            slide.kind = "content" if slide.bullets else "section"
         result.append(slide)
     return result, "ai"

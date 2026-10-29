@@ -5,9 +5,9 @@ import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { GenerateRequest, Generation, SlideStyle, UploadedImage } from '../../core/models';
 
+/** One numbered slide; its page number is its position in the list. */
 interface Row {
   key: number;
-  page: number;
   details: string;
   image: UploadedImage | null;
   uploading: boolean;
@@ -33,21 +33,19 @@ export class CreatePage {
   protected readonly stylesLoaded = signal(false);
   protected readonly styleId = signal<string | null>(null);
 
+  protected readonly cover = signal(true);
   protected readonly title = signal('');
+  protected readonly subtitle = signal('');
   protected readonly topic = signal('');
   protected readonly instructions = signal('');
-  protected readonly rows = signal<Row[]>([this.blankRow(1)]);
+  protected readonly rows = signal<Row[]>([this.blankRow()]);
 
   protected readonly generating = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly result = signal<Generation | null>(null);
 
-  protected readonly pageProblem = computed(() => {
-    const pages = this.rows().map((r) => r.page);
-    if (pages.some((p) => !Number.isInteger(p) || p < 1)) return 'Page numbers must be 1 or higher.';
-    if (new Set(pages).size !== pages.length) return 'Two slides share the same page number.';
-    return null;
-  });
+  /** Key of the row being dragged, for drag-to-reorder. */
+  protected readonly dragKey = signal<number | null>(null);
 
   protected readonly filledRows = computed(() => this.rows().filter((r) => r.details.trim() || r.image));
 
@@ -55,7 +53,7 @@ export class CreatePage {
     () =>
       !!this.styleId() &&
       this.filledRows().length > 0 &&
-      !this.pageProblem() &&
+      (!this.cover() || !!this.title().trim()) &&
       !this.rows().some((r) => r.uploading) &&
       !this.generating(),
   );
@@ -68,10 +66,12 @@ export class CreatePage {
     effect(() => {
       const draft = {
         styleId: this.styleId(),
+        cover: this.cover(),
         title: this.title(),
+        subtitle: this.subtitle(),
         topic: this.topic(),
         instructions: this.instructions(),
-        rows: this.rows().map(({ page, details, image }) => ({ page, details, image })),
+        rows: this.rows().map(({ details, image }) => ({ details, image })),
       };
       try {
         localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -84,8 +84,8 @@ export class CreatePage {
   }
 
   // ------------------------------------------------------------------ setup
-  private blankRow(page: number): Row {
-    return { key: this.nextKey++, page, details: '', image: null, uploading: false, error: null };
+  private blankRow(): Row {
+    return { key: this.nextKey++, details: '', image: null, uploading: false, error: null };
   }
 
   private restoreDraft(): void {
@@ -94,13 +94,18 @@ export class CreatePage {
       if (!raw) return;
       const d = JSON.parse(raw);
       this.styleId.set(d.styleId ?? null);
+      this.cover.set(d.cover ?? true);
       this.title.set(d.title ?? '');
+      this.subtitle.set(d.subtitle ?? '');
       this.topic.set(d.topic ?? '');
       this.instructions.set(d.instructions ?? '');
       if (Array.isArray(d.rows) && d.rows.length) {
+        // Older drafts carried typed page numbers: keep their order.
+        const saved: { page?: number; details?: string; image?: UploadedImage | null }[] = [...d.rows];
+        saved.sort((a, b) => (a.page ?? 0) - (b.page ?? 0));
         this.rows.set(
-          d.rows.map((r: Pick<Row, 'page' | 'details' | 'image'>) => ({
-            ...this.blankRow(r.page),
+          saved.map((r) => ({
+            ...this.blankRow(),
             details: r.details ?? '',
             image: r.image ?? null,
           })),
@@ -129,22 +134,36 @@ export class CreatePage {
 
   // ------------------------------------------------------------------- rows
   protected addRow(): void {
-    const next = Math.max(0, ...this.rows().map((r) => r.page || 0)) + 1;
-    this.rows.update((rows) => [...rows, this.blankRow(next)]);
+    this.rows.update((rows) => [...rows, this.blankRow()]);
   }
 
   protected removeRow(key: number): void {
     const row = this.rows().find((r) => r.key === key);
     if (row?.image) void firstValueFrom(this.api.deleteImage(row.image.id)).catch(() => undefined);
-    this.rows.update((rows) => (rows.length > 1 ? rows.filter((r) => r.key !== key) : [this.blankRow(1)]));
+    this.rows.update((rows) => (rows.length > 1 ? rows.filter((r) => r.key !== key) : [this.blankRow()]));
   }
 
   protected patch(key: number, changes: Partial<Row>): void {
     this.rows.update((rows) => rows.map((r) => (r.key === key ? { ...r, ...changes } : r)));
   }
 
-  protected setPage(key: number, value: string): void {
-    this.patch(key, { page: Number.parseInt(value, 10) || 0 });
+  /** Moves a slide to `index` in the list (used by the arrow buttons and drag-and-drop). */
+  protected moveRow(key: number, index: number): void {
+    this.rows.update((rows) => {
+      const from = rows.findIndex((r) => r.key === key);
+      if (from < 0 || index < 0 || index >= rows.length || index === from) return rows;
+      const next = [...rows];
+      const [row] = next.splice(from, 1);
+      next.splice(index, 0, row);
+      return next;
+    });
+  }
+
+  protected dropOn(index: number, event: DragEvent): void {
+    event.preventDefault();
+    const key = this.dragKey();
+    if (key !== null) this.moveRow(key, index);
+    this.dragKey.set(null);
   }
 
   protected async attach(key: number, event: Event): Promise<void> {
@@ -181,12 +200,13 @@ export class CreatePage {
 
     const request: GenerateRequest = {
       style_id: styleId,
+      cover: this.cover(),
       title: this.title().trim(),
+      subtitle: this.cover() ? this.subtitle().trim() : '',
       topic: this.topic().trim(),
       instructions: this.instructions().trim(),
-      slides: [...this.filledRows()]
-        .sort((a, b) => a.page - b.page)
-        .map((r) => ({ page: r.page, details: r.details.trim(), image_id: r.image?.id ?? null })),
+      // Pages follow the list order; empty rows are skipped without leaving gaps.
+      slides: this.filledRows().map((r, i) => ({ page: i + 1, details: r.details.trim(), image_id: r.image?.id ?? null })),
     };
 
     try {
@@ -217,10 +237,12 @@ export class CreatePage {
 
   protected newDeck(): void {
     this.result.set(null);
+    this.cover.set(true);
     this.title.set('');
+    this.subtitle.set('');
     this.topic.set('');
     this.instructions.set('');
-    this.rows.set([this.blankRow(1)]);
+    this.rows.set([this.blankRow()]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 

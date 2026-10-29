@@ -84,3 +84,34 @@ def test_full_flow():
         # delete style
         assert c.delete(f"/api/styles/{style['id']}").status_code == 204
         assert len(c.get("/api/styles").json()) == 1
+
+
+def test_cover_slide_comes_first_in_order():
+    with TestClient(app) as c:
+        style = c.post("/api/styles", files={"file": ("biology_dark.pptx", (FIX / "biology_dark.pptx").read_bytes())}).json()
+        body = {
+            "style_id": style["id"],
+            "title": "Cells and Photosynthesis",
+            "cover": True,
+            "subtitle": "Year 9  |  Mr. Adams",
+            "slides": [
+                {"page": 1, "details": "What is a cell\nBasic unit of life\nAll living things are made of cells"},
+                {"page": 2, "details": "Organelles\nNucleus controls the cell\nMitochondria release energy"},
+                {"page": 3, "details": "Plenary\nWhat did we learn today\nOne thing you will remember"},
+            ],
+        }
+        g = c.post("/api/generate", json=body)
+        assert g.status_code == 201, g.text
+        slides = g.json()["slides"]
+        assert [s["page"] for s in slides] == [0, 1, 2, 3]
+        assert slides[0] == {**slides[0], "kind": "title", "title": "Cells and Photosynthesis", "subtitle": "Year 9  |  Mr. Adams"}
+        assert all(s["kind"] != "title" for s in slides[1:]), "only the cover is a title slide"
+
+        prs = Presentation(str(Path(os.environ["STORAGE_DIR"]) / "outputs" / f"{g.json()['id']}.pptx"))
+        texts = ["\n".join(s.text_frame.text for s in slide.shapes if s.has_text_frame) for slide in prs.slides]
+        assert len(texts) == 4
+        assert "Cells and Photosynthesis" in texts[0] and "Mr. Adams" in texts[0]
+        assert [t.split("\n")[0] for t in texts[1:]] == ["What is a cell", "Organelles", "Plenary"]
+
+        no_title = {**body, "title": "  "}
+        assert c.post("/api/generate", json=no_title).status_code == 400

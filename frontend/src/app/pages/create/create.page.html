@@ -45,20 +45,46 @@
   }
 </section>
 
-<!-- ============ 2. Details ============ -->
+<!-- ============ 2. Cover ============ -->
 <section class="card section">
   <div class="section-head">
     <span class="section-num">2</span>
+    <div>
+      <h2>Cover slide</h2>
+      <p class="muted small">The first slide of the deck. It uses exactly what you type here.</p>
+    </div>
+  </div>
+  <div class="stack">
+    <label class="check">
+      <input type="checkbox" [ngModel]="cover()" (ngModelChange)="cover.set($event)" />
+      Start with a cover slide
+    </label>
+    <label class="field">
+      Title
+      @if (!cover()) {
+        <span class="hint">(optional, used for the file name)</span>
+      }
+      <input class="input" [(ngModel)]="title" maxlength="200" placeholder="e.g. Cells and Photosynthesis" [required]="cover()" />
+    </label>
+    @if (cover()) {
+      <label class="field">
+        Subtitle <span class="hint">(optional)</span>
+        <input class="input" [(ngModel)]="subtitle" maxlength="300" placeholder="e.g. Year 9 Biology  |  Mr. Adams" />
+      </label>
+    }
+  </div>
+</section>
+
+<!-- ============ 3. Details ============ -->
+<section class="card section">
+  <div class="section-head">
+    <span class="section-num">3</span>
     <div>
       <h2>About this lesson</h2>
       <p class="muted small">Optional, but it helps the AI pitch the wording at the right level.</p>
     </div>
   </div>
   <div class="stack">
-    <label class="field">
-      Deck title
-      <input class="input" [(ngModel)]="title" maxlength="200" placeholder="e.g. Cells and Photosynthesis" />
-    </label>
     <div class="two">
       <label class="field">
         Subject / year group
@@ -72,31 +98,50 @@
   </div>
 </section>
 
-<!-- ============ 3. Slides ============ -->
+<!-- ============ 4. Slides ============ -->
 <section class="card section">
   <div class="section-head">
-    <span class="section-num">3</span>
+    <span class="section-num">4</span>
     <div>
       <h2>What goes on each slide?</h2>
-      <p class="muted small">Write rough notes for each page number. Attach a picture to any page that needs one.</p>
+      <p class="muted small">Write rough notes for each slide, in order. Drag a slide (or use the arrows) to move it. Attach a picture to any slide that needs one.</p>
     </div>
   </div>
 
   <div class="slides">
-    @for (row of rows(); track row.key) {
-      <div class="slide-row">
-        <label class="page-no">
-          <span class="muted small">Page</span>
-          <input
-            class="input"
-            type="number"
-            min="1"
-            inputmode="numeric"
-            [value]="row.page || ''"
-            (input)="setPage(row.key, $any($event.target).value)"
-            [attr.aria-label]="'Page number for slide ' + $index"
-          />
-        </label>
+    @if (cover()) {
+      <div class="slide-row cover-row">
+        <div class="order"><span class="slide-no">Cover</span></div>
+        <div class="slide-main">
+          <strong>{{ title().trim() || 'Add a title above' }}</strong>
+          @if (subtitle().trim()) {
+            <span class="muted small">{{ subtitle() }}</span>
+          }
+        </div>
+      </div>
+    }
+    @for (row of rows(); track row.key; let i = $index, last = $last) {
+      <div
+        class="slide-row"
+        [class.dragging]="dragKey() === row.key"
+        (dragover)="$event.preventDefault()"
+        (drop)="dropOn(i, $event)"
+      >
+        <div class="order">
+          <span
+            class="drag-handle"
+            draggable="true"
+            (dragstart)="dragKey.set(row.key)"
+            (dragend)="dragKey.set(null)"
+            title="Drag to move"
+            aria-hidden="true"
+          >⠿</span>
+          <span class="slide-no">Slide {{ i + 1 }}</span>
+          <span class="arrows">
+            <button type="button" class="btn btn-icon btn-xs" [disabled]="i === 0" (click)="moveRow(row.key, i - 1)" [attr.aria-label]="'Move slide ' + (i + 1) + ' up'">↑</button>
+            <button type="button" class="btn btn-icon btn-xs" [disabled]="last" (click)="moveRow(row.key, i + 1)" [attr.aria-label]="'Move slide ' + (i + 1) + ' down'">↓</button>
+          </span>
+        </div>
 
         <div class="slide-main">
           <textarea
@@ -106,7 +151,7 @@
             [ngModel]="row.details"
             (ngModelChange)="patch(row.key, { details: $event })"
             placeholder="e.g. Intro to photosynthesis. Plants make food from sunlight. Needs water + CO₂. Ask: where does it happen?"
-            [attr.aria-label]="'Details for page ' + row.page"
+            [attr.aria-label]="'Notes for slide ' + (i + 1)"
           ></textarea>
 
           <div class="attach">
@@ -138,10 +183,6 @@
     }
   </div>
 
-  @if (pageProblem(); as problem) {
-    <p class="small err" role="alert" style="margin-top: 10px">{{ problem }}</p>
-  }
-
   <button type="button" class="btn" style="margin-top: 14px" (click)="addRow()">+ Add another slide</button>
 </section>
 
@@ -151,13 +192,15 @@
     @if (generating()) {
       <span class="spinner"></span> Building your slides…
     } @else {
-      Generate {{ filledRows().length || '' }} {{ filledRows().length === 1 ? 'slide' : 'slides' }}
+      Generate {{ filledRows().length + (cover() ? 1 : 0) || '' }} {{ filledRows().length + (cover() ? 1 : 0) === 1 ? 'slide' : 'slides' }}
     }
   </button>
   @if (generating()) {
     <span class="muted small">This usually takes 10–30 seconds.</span>
   } @else if (!styleId()) {
     <span class="muted small">Choose a style first.</span>
+  } @else if (cover() && !title().trim()) {
+    <span class="muted small">Give the cover slide a title.</span>
   } @else if (filledRows().length === 0) {
     <span class="muted small">Add some notes to at least one slide.</span>
   }

@@ -17,7 +17,7 @@ from . import ai, config, db
 from .generator import build_deck
 from .previews import previews_available, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile
-from .schemas import GenerateRequest
+from .schemas import GenerateRequest, SlideContent
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidesmith")
@@ -235,6 +235,8 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
         raise HTTPException(400, "Each slide needs a different page number.")
     if len(pages) > config.MAX_SLIDES_PER_REQUEST:
         raise HTTPException(400, f"Please keep it to {config.MAX_SLIDES_PER_REQUEST} slides per request.")
+    if req.cover and not req.title.strip():
+        raise HTTPException(400, "Give the cover slide a title.")
 
     image_paths: dict[int, Path] = {}
     for spec in req.slides:
@@ -257,6 +259,8 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     except anthropic.APIError as exc:
         log.exception("Anthropic API error")
         raise HTTPException(502, f"The AI service returned an error: {getattr(exc, 'message', exc)}")
+    if req.cover:
+        contents.insert(0, SlideContent(page=0, kind="title", title=req.title.strip(), subtitle=req.subtitle.strip()))
 
     gen_id = uuid.uuid4().hex[:12]
     out_path = config.OUTPUTS_DIR / f"{gen_id}.pptx"
