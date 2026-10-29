@@ -195,3 +195,25 @@ def test_no_sample_text_left_behind():
         assert "OLD" not in text, f"slide {n} kept sample text:\n{text}"
         assert f"New title {n}" in text and f"New point {n}b" in text
         assert "Oak Hill School" in text, f"slide {n} lost the repeated footer"
+
+
+def test_designed_template_keeps_cover_art_off_content_slides():
+    """Cover designs (layouts dressed with logos) only make covers; content slides come from
+    the cleanest samples and lose the cards, bars and icons that framed sample content."""
+    infos = analyze_presentation(Presentation(str(FIX / "dressed.pptx")))
+    assert [i.kind for i in infos] == ["title", "content", "content", "content", "title"]
+
+    contents = [SlideContent(page=0, kind="title", title="Quadratic Equations", subtitle="Year 10")]
+    contents += [SlideContent(page=n, kind="content", title=f"New title {n}", bullets=[f"Point {n}"]) for n in range(1, 5)]
+    out = OUT / "dressed.pptx"
+    build_deck(FIX / "dressed.pptx", contents, {}, out)
+    result = Presentation(str(out))
+
+    cover, *slides = result.slides
+    assert cover.slide_layout.name == "Title Only", "the cover keeps its dressed design"
+    for n, slide in enumerate(slides, 1):
+        assert slide.slide_layout.name == "Blank", f"slide {n} reused a cover or card-art layout"
+        text = _all_text(slide)
+        assert "OLD" not in text and f"New title {n}" in text and "Private & Confidential" in text
+        leftovers = [sh.shape_type for sh in slide.shapes if sh.shape_type in (MSO_SHAPE_TYPE.AUTO_SHAPE, MSO_SHAPE_TYPE.PICTURE)]
+        assert not leftovers, f"slide {n} kept sample decoration: {leftovers}"

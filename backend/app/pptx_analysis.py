@@ -43,6 +43,7 @@ class SlideInfo:
     picture_ids: list[int] = field(default_factory=list)  # large pictures only
     stale_ids: list[int] = field(default_factory=list)  # extra text boxes holding sample content
     complex: bool = False  # contains tables / charts we can't safely refill
+    clutter: float = 0  # share of the slide covered by decoration left once sample content is gone
     title_pt: float = 36
     body_pt: float = 20
     preview_text: str = ""
@@ -55,6 +56,7 @@ class SlideInfo:
             "has_body": self.body_id is not None,
             "pictures": len(self.picture_ids),
             "complex": self.complex,
+            "clutter": self.clutter,
             "preview_text": self.preview_text,
         }
 
@@ -76,6 +78,15 @@ def shape_by_id(slide: Slide, shape_id: int):
         if shp.shape_id == shape_id:
             return shp
     return None
+
+
+def _box(shape) -> tuple[int, int, int, int]:
+    left, top = shape.left or 0, shape.top or 0
+    return left, top, left + (shape.width or 0), top + (shape.height or 0)
+
+
+def _touches(a: tuple[int, int, int, int], b: tuple[int, int, int, int], pad: int = 0) -> bool:
+    return a[0] - pad < b[2] and b[0] - pad < a[2] and a[1] - pad < b[3] and b[1] - pad < a[3]
 
 
 def _norm_text(text: str) -> str:
@@ -205,7 +216,8 @@ def analyze_slide(
     complex_ = bool(tables_and_charts)
 
     # --- title ---------------------------------------------------------- #
-    title = next((s for s in text_shapes if _ph_type(s) in _TITLE_PLACEHOLDERS), None)
+    title_phs = [s for s in text_shapes if _ph_type(s) in _TITLE_PLACEHOLDERS]
+    title = next((s for s in title_phs if s.text_frame.text.strip()), title_phs[0] if title_phs else None)
     if title is None and text_shapes:
         # biggest font wins; ties broken by position (higher on the slide first)
         title = sorted(
@@ -227,6 +239,14 @@ def analyze_slide(
         return _norm_text(s.text_frame.text) in repeated_text
 
     leftovers = [s for s in rest if s is not body and s.text_frame.text.strip() and not is_style(s)]
+    # Pictures that aren't style (repeated logo, full-bleed background) and aren't the
+    # image slot are sample content too: icons, screenshots, diagrams.
+    leftovers += [
+        s
+        for s, _ in walked
+        if _is_picture(s) and s not in big_pictures
+        and _image_hash(s) not in repeated and _area(s) < 0.85 * slide_area
+    ]
     # A group holding only sample text (a callout and its box) goes as a whole;
     # one that also holds the title, body or style text just loses that text.
     keep_groups = {top_of[s.shape_id].shape_id for s in (title, body) if s is not None}
@@ -237,6 +257,48 @@ def analyze_slide(
         sid = s.shape_id if root is s or root.shape_id in keep_groups else root.shape_id
         if sid not in stale:
             stale.append(sid)
+
+    kept_roots = {top_of[s.shape_id].shape_id for s in (title, body) if s is not None}
+    # Frames, bars and lines that held sample content would be left empty: drop the ones
+    # touching removed content, as long as they don't touch the title, body or image slot.
+    kept_boxes = [_box(s) for s in (title, body, *big_pictures) if s is not None]
+    removed_boxes = [_box(s) for s, _ in walked if s.shape_id in stale]
+    frames = [
+        s for s in slide.shapes
+        if not s.is_placeholder and not _is_picture(s) and s.shape_id not in stale
+        and s.shape_id not in kept_roots and s.shape_type != MSO_SHAPE_TYPE.GROUP
+        and _area(s) < 0.5 * slide_area
+        and not (s.has_text_frame and s.text_frame.text.strip())
+    ]
+    pad = 91440  # 0.1 inch: a bar drawn beside its card still counts as touching it
+    changed = True
+    while changed:
+        changed = False
+        for f in frames:
+            box = _box(f)
+            if f.shape_id in stale or any(_touches(box, k) for k in kept_boxes):
+                continue
+            if any(_touches(box, r, pad) for r in removed_boxes):
+                stale.append(f.shape_id)
+                removed_boxes.append(box)
+                changed = True
+
+    # Shapes that stay on a clone but carry nothing of the teacher's new slide: empty
+    # cards, bars and divider lines that framed sample content, on the slide or built
+    # into its layout. Style (backgrounds, logos, repeated text, footers) doesn't count.
+    def is_decor(s) -> bool:
+        if s.is_placeholder or (s.part is slide.part and (s.shape_id in kept_roots or s.shape_id in gone)):
+            return False
+        if _area(s) >= 0.85 * slide_area:
+            return False
+        if _is_picture(s):  # sample pictures are removed; artwork baked into a layout stays
+            return s.part is not slide.part and _area(s) >= 0.05 * slide_area
+        return not (s.has_text_frame and s.text_frame.text.strip() and is_style(s))
+
+    gone = set(stale) | {p.shape_id for p in big_pictures}
+    decor = [s for s in slide.shapes if is_decor(s)] + [s for s in slide.slide_layout.shapes if is_decor(s)]
+    # Lines have next to no area but still stand out on an empty slide.
+    clutter = min(sum(max(_area(s), 0.01 * slide_area) for s in decor) / slide_area, 1.0)
 
     body_text = body.text_frame.text.strip() if body is not None else ""
     body_paragraphs = [p for p in (body.text_frame.paragraphs if body is not None else []) if p.text.strip()]
@@ -264,6 +326,7 @@ def analyze_slide(
         picture_ids=[p.shape_id for p in big_pictures],
         stale_ids=stale,
         complex=complex_,
+        clutter=clutter,
         title_pt=resolve_pt(title, slide, True) if title is not None else 36,
         body_pt=resolve_pt(body, slide, False) if body is not None else 20,
         preview_text=(title.text_frame.text.strip()[:80] if title is not None else ""),
@@ -271,12 +334,17 @@ def analyze_slide(
     return info
 
 
+def _style_threshold(prs) -> int:
+    """Style (logo, footer) shows on most sample slides; an icon reused on a couple doesn't."""
+    return max(2, math.ceil(len(prs.slides) / 2))
+
+
 def _repeated_images(prs) -> frozenset[str]:
     seen: Counter[str] = Counter()
     for slide in prs.slides:
-        hashes = {_image_hash(s) for s in slide.shapes if _is_picture(s)}
+        hashes = {_image_hash(s) for s, _ in _walk(slide.shapes) if _is_picture(s)}
         seen.update(h for h in hashes if h)
-    return frozenset(h for h, n in seen.items() if n >= 2)
+    return frozenset(h for h, n in seen.items() if n >= _style_threshold(prs))
 
 
 def _repeated_texts(prs) -> frozenset[str]:
@@ -284,14 +352,29 @@ def _repeated_texts(prs) -> frozenset[str]:
     for slide in prs.slides:
         texts = {_norm_text(s.text_frame.text) for s, _ in _walk(slide.shapes) if s.has_text_frame}
         seen.update(t for t in texts if t)
-    return frozenset(t for t, n in seen.items() if n >= 2)
+    return frozenset(t for t, n in seen.items() if n >= _style_threshold(prs))
+
+
+def _layout_pictures(slide: Slide) -> int:
+    return sum(1 for _ in slide.slide_layout._element.iter(qn("a:blip")))
 
 
 def analyze_presentation(prs) -> list[SlideInfo]:
     w, h = prs.slide_width, prs.slide_height
     repeated = _repeated_images(prs)
     repeated_text = _repeated_texts(prs)
-    return [analyze_slide(s, i, w, h, repeated, repeated_text) for i, s in enumerate(prs.slides)]
+    infos = [analyze_slide(s, i, w, h, repeated, repeated_text) for i, s in enumerate(prs.slides)]
+
+    # Cover designs only make covers: the first sample, and any sample whose layout is
+    # dressed with several more pictures than usual (partner logos, cover art), would
+    # put that artwork on every ordinary slide cloned from it.
+    counts = [_layout_pictures(s) for s in prs.slides]
+    usual = sorted(counts)[len(counts) // 2] if counts else 0
+    for info, n in zip(infos, counts):
+        dressed = n - usual >= 3
+        if info.kind in ("content", "image") and info.title_id is not None and (info.index == 0 or dressed):
+            info.kind = "title"
+    return infos
 
 
 # --------------------------------------------------------------------------- #

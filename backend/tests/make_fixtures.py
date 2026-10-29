@@ -122,8 +122,67 @@ def leftovers_deck():
     prs.save(OUT / "leftovers.pptx")
 
 
+def _layout_picture(layout, color, x, y, w, h, label):
+    """Bakes a picture into a layout (logos and artwork that sit behind every slide using it)."""
+    path = OUT / f"_tmp_{label}.png"
+    Image.new("RGB", (300, 200), color).save(path)
+    _, rid = layout.part.get_or_add_image_part(str(path))
+    tree = layout.shapes._spTree
+    tree.add_pic(tree.max_shape_id + 1, label, "", rid, Inches(x), Inches(y), Inches(w), Inches(h))
+    path.unlink()
+
+
+def dressed_deck():
+    """Designed (corporate-style) template: a cover layout dressed with partner logos, a layout
+    with card artwork baked in, a busy slide of cards and an icon, and one clean slide."""
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    cover_layout, art_layout, blank = prs.slide_layouts[5], prs.slide_layouts[1], prs.slide_layouts[6]
+    for i, color in enumerate(("#ff9900", "#00a4ef", "#ff3621", "#7fba00")):
+        _layout_picture(cover_layout, color, 0.8 + i * 1.6, 5.8, 1.3, 0.8, f"partner_logo_{i}")
+    _layout_picture(art_layout, "#e9e3f5", 0.6, 3.6, 12.1, 3.4, "card_artwork")
+    FOOTER, INK = "Private & Confidential", "1D2242"
+    long_line = "OLD Build the internal marketplace: one evening, three tracks, and a panel judging what ships."
+
+    def footer(s):
+        tb(s, 5.5, 7.0, 2.4, 0.3, FOOTER, 9, "888888", font="Calibri")
+
+    s = prs.slides.add_slide(cover_layout)
+    s.shapes.title.text = "OLD Hackathon Kick-off"
+    tb(s, 0.8, 3.6, 11, 1.2, long_line, 20, INK, font="Calibri"); footer(s)
+
+    s = prs.slides.add_slide(blank)
+    tb(s, 0.8, 0.5, 11, 1.0, "OLD Delivery Velocity", 36, INK, True)
+    tb(s, 0.8, 1.6, 11, 1.4, ["OLD Ship faster with templates", "OLD Reuse what works"], 20, INK, font="Calibri")
+    for i in range(3):
+        x = 0.8 + i * 4.0
+        s.shapes.add_shape(1, Inches(x + 0.15), Inches(3.6), Inches(3.5), Inches(2.6))  # card
+        s.shapes.add_shape(1, Inches(x), Inches(3.6), Inches(0.12), Inches(2.6))  # accent bar
+        tb(s, x + 0.3, 3.8, 3.2, 2.2, f"OLD Card {i + 1} sample text", 16, INK, font="Calibri")
+    icon = OUT / "_tmp_icon.png"; Image.new("RGB", (64, 64), "#6c3fc5").save(icon)
+    s.shapes.add_picture(str(icon), Inches(11.9), Inches(0.5), Inches(0.6), Inches(0.6)); icon.unlink()
+    footer(s)
+
+    s = prs.slides.add_slide(blank)
+    tb(s, 0.8, 0.5, 11, 1.0, "OLD Why We Are Running This", 36, INK, True)
+    tb(s, 0.8, 1.6, 11, 4.6, ["OLD Teams rebuild the same thing", "OLD Nothing is shared", "OLD Governance comes last"], 20, INK, font="Calibri")
+    footer(s)
+
+    s = prs.slides.add_slide(art_layout)
+    s.shapes.title.text = "OLD How We Will Score It"
+    s.placeholders[1].text_frame.text = "OLD Impact\nOLD Reuse\nOLD Polish"
+    footer(s)
+
+    s = prs.slides.add_slide(cover_layout)
+    s.shapes.title.text = "OLD Apply and Show Us"
+    tb(s, 0.8, 3.6, 11, 1.2, long_line, 20, INK, font="Calibri"); footer(s)
+
+    prs.save(OUT / "dressed.pptx")
+
+
 if __name__ == "__main__":
     textbox_deck()
     placeholder_deck()
     leftovers_deck()
+    dressed_deck()
     print("fixtures written to", OUT)
