@@ -281,8 +281,9 @@ def _mock_cook(req: CookRequest, image_ids: list[str]) -> tuple[SlideContent, li
                     bullets=[f"Understand the key ideas of {topic}", "Use the key words correctly", "Apply what we learn to examples"]),
         CookedSlide(page=0, kind="content", title="Starter", bullets=[f"What do you already know about {topic}?", "Discuss with a partner for 2 minutes"]),
     ]
-    for start in range(0, len(facts), 3):
-        chunk = facts[start : start + 3]
+    teaching = facts[1:] if len(facts) > 1 else facts  # the first sentence is the cover's subtitle
+    for start in range(0, len(teaching), 3):
+        chunk = teaching[start : start + 3]
         title = " ".join(chunk[0].split()[:5])
         slides.append(CookedSlide(page=0, kind="content", title=title, bullets=chunk))
     for image_id in image_ids:
@@ -297,8 +298,10 @@ def _mock_cook(req: CookRequest, image_ids: list[str]) -> tuple[SlideContent, li
     room = max(total - len(closing), 1)
     pictured = [s for s in slides if s.image_id]
     plain = [s for s in slides if not s.image_id][: max(room - len(pictured), 1)]
+    practice = 0
     while len(plain) + len(pictured) < room:
-        plain.append(CookedSlide(page=0, kind="content", title=f"Practice {len(plain) - 1}", bullets=[f"Try a question on {topic}", "Show your working"]))
+        practice += 1
+        plain.append(CookedSlide(page=0, kind="content", title=f"Practice {practice}", bullets=[f"Try a question on {topic}", "Show your working"]))
     return cover, plain + pictured + closing
 
 
