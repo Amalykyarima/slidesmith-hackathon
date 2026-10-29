@@ -17,7 +17,7 @@ from pathlib import Path
 from lxml import etree
 from PIL import Image
 from pptx import Presentation
-from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.oxml.ns import qn
 from pptx.util import Emu
 
@@ -382,6 +382,17 @@ def _arrange(prs, target: Target, image_path: Path, position: str, alt: str) -> 
         if el.getparent() is not None:
             el.getparent().remove(el)
     target.picture_els = []
+    # Lines and frames that divided the sample's own arrangement don't fit the new one.
+    keep = {target.title._element if target.title is not None else None, target.body._element if target.body is not None else None}
+    for shape in list(target.slide.shapes):
+        if shape._element in keep or shape.is_placeholder or shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            continue
+        if shape.has_text_frame and shape.text_frame.text.strip():
+            continue
+        cx = (shape.left or 0) + (shape.width or 0) / 2
+        cy = (shape.top or 0) + (shape.height or 0) / 2
+        if left <= cx <= left + width and top <= cy <= top + height and (shape.width or 0) * (shape.height or 0) < 0.5 * width * height:
+            shape._element.getparent().remove(shape._element)
     gap = int(0.3 * 914400)
     split_w, split_h = int(width * 0.45), int(height * 0.55)
     text_box = None

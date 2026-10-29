@@ -206,14 +206,19 @@ def test_image_positions(tmp_path):
     """Left/right/top split the sample's content area between picture and body; large moves
     bullets to the notes; none drops the picture."""
     photo = _img(tmp_path / "photo.png", "#2255aa", (800, 600), "PHOTO")
+    # A sample image slide whose picture and text are split by a divider line.
+    prs = Presentation(str(FIX / "biology_dark.pptx"))
+    prs.slides[2].shapes.add_connector(1, Inches(6.7), Inches(1.9), Inches(6.7), Inches(6.4))
+    style = tmp_path / "divided.pptx"; prs.save(style)
     base = dict(kind="image", title="Look closely", bullets=["Label the parts", "Explain each one"])
     contents = [
         SlideContent(page=n, image_position=pos, **base)
         for n, pos in enumerate(["left", "right", "top", "large", "none"], 1)
     ]
     out = tmp_path / "positions.pptx"
-    warnings = build_deck(FIX / "biology_dark.pptx", contents, {n: photo for n in range(1, 6)}, out)
+    warnings = build_deck(style, contents, {n: photo for n in range(1, 6)}, out)
     left, right, top, large, none = Presentation(str(out)).slides
+    assert not any(s.shape_type == MSO_SHAPE_TYPE.LINE or s._element.tag.endswith("cxnSp") for s in left.shapes), "sample divider removed"
 
     def body(slide):
         return next(s for s in slide.shapes if s.has_text_frame and "Label the parts" in s.text_frame.text)
