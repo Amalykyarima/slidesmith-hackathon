@@ -3,6 +3,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 SlideKind = Literal["title", "content", "image", "section"]
+# Where the teacher wants the attached picture: "auto" keeps the sample slide's own spot.
+ImagePosition = Literal["auto", "left", "right", "top", "large", "none"]
+HexColor = Field(default=None, pattern=r"^#?[0-9A-Fa-f]{6}$")
 
 
 class SlideSpec(BaseModel):
@@ -24,8 +27,21 @@ class GenerateRequest(BaseModel):
     slides: list[SlideSpec] = Field(min_length=1, max_length=40)
 
 
+class TextRun(BaseModel):
+    """A stretch of text with the teacher's formatting. Unset fields keep the template's style."""
+
+    text: str = Field(max_length=2000)
+    bold: bool | None = None  # None: as the template has it
+    italic: bool | None = None
+    underline: bool | None = None
+    size: float | None = Field(default=None, ge=6, le=120)  # points
+    font: str | None = Field(default=None, max_length=64)
+    color: str | None = HexColor
+    highlight: str | None = HexColor
+
+
 class SlideContent(BaseModel):
-    """What the AI (or mock) produced for one page."""
+    """What the AI (or mock) produced for one page, plus the teacher's edits."""
 
     page: int
     kind: SlideKind = "content"
@@ -33,3 +49,15 @@ class SlideContent(BaseModel):
     subtitle: str = ""
     bullets: list[str] = Field(default_factory=list)
     notes: str = ""
+    # Set by the slide editor; when present they replace title / bullets (or subtitle).
+    title_runs: list[TextRun] | None = Field(default=None, max_length=100)
+    body_runs: list[list[TextRun]] | None = Field(default=None, max_length=30)
+    image_position: ImagePosition = "auto"
+    text_align: Literal["auto", "left", "center", "right"] = "auto"
+    text_anchor: Literal["auto", "top", "middle", "bottom"] = "auto"
+
+
+class RebuildRequest(BaseModel):
+    """Edited slides for an existing generation; built again without calling the AI."""
+
+    slides: list[SlideContent] = Field(min_length=1, max_length=41)

@@ -46,6 +46,22 @@ export interface GenerateRequest {
   slides: SlideSpec[];
 }
 
+export type ImagePosition = 'auto' | 'left' | 'right' | 'top' | 'large' | 'none';
+export type TextAlign = 'auto' | 'left' | 'center' | 'right';
+export type TextAnchor = 'auto' | 'top' | 'middle' | 'bottom';
+
+/** A stretch of text with the teacher's formatting. Unset fields keep the template's style. */
+export interface TextRun {
+  text: string;
+  bold?: boolean | null;
+  italic?: boolean | null;
+  underline?: boolean | null;
+  size?: number | null;
+  font?: string | null;
+  color?: string | null;
+  highlight?: string | null;
+}
+
 export interface SlideContent {
   page: number;
   kind: SlideKind;
@@ -53,6 +69,12 @@ export interface SlideContent {
   subtitle: string;
   bullets: string[];
   notes: string;
+  /** Set by the slide editor; replace title / bullets when present. */
+  title_runs?: TextRun[] | null;
+  body_runs?: TextRun[][] | null;
+  image_position?: ImagePosition;
+  text_align?: TextAlign;
+  text_anchor?: TextAnchor;
 }
 
 export interface Generation {
@@ -64,6 +86,8 @@ export interface Generation {
   slides: SlideContent[];
   warnings: string[];
   download_url: string;
+  /** Pages that have a picture attached (their position can be changed). */
+  image_pages: number[];
   preview_status: PreviewStatus;
   previews: string[];
 }

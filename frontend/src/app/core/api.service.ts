@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { GenerateRequest, Generation, Health, SlideStyle, UploadedImage } from './models';
+import { GenerateRequest, Generation, Health, SlideContent, SlideStyle, UploadedImage } from './models';
 
 /** All backend calls live here. Paths are relative; `proxy.conf.json` forwards them to FastAPI in dev. */
 @Injectable({ providedIn: 'root' })
@@ -45,7 +45,12 @@ export class ApiService {
     return this.http.post<Generation>('/api/generate', request);
   }
 
-  getGeneration(id: string): Observable<Generation> {
+  /** Builds edited slides again in the same style, without calling the AI. Returns a new generation. */
+  rebuild(id: string, slides: SlideContent[]): Observable<Generation> {
+    return this.http.post<Generation>(`/api/generations/${id}/rebuild`, { slides });
+  }
+
+    getGeneration(id: string): Observable<Generation> {
     return this.http.get<Generation>(`/api/generations/${id}`);
   }
 }

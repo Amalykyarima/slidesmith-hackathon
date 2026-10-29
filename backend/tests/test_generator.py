@@ -157,3 +157,74 @@ def test_sections_ext_removed(tmp_path):
     build_deck(style, [SlideContent(page=1, kind="content", title="New", bullets=["x"])], {}, out)
     with zipfile.ZipFile(out) as z:
         assert b"sectionLst" not in z.read("ppt/presentation.xml")
+
+
+def _runs(shape):
+    return [r for p in shape.text_frame.paragraphs for r in p.runs]
+
+
+def test_teacher_formatting_is_applied_per_word(tmp_path):
+    """Formatted runs land in the pptx with valid <a:rPr> child order; unset fields keep the template."""
+    from app.schemas import TextRun
+
+    title = [TextRun(text="Solving "), TextRun(text="Quadratics", bold=True, color="#C00000", font="Georgia", size=44)]
+    body = [
+        [TextRun(text="Use the "), TextRun(text="formula", italic=True, underline=True, highlight="FFFF00")],
+        [TextRun(text="Check", bold=False), TextRun(text=" your answer")],
+    ]
+    content = SlideContent(page=1, kind="content", title="x", title_runs=title, body_runs=body,
+                           text_align="center", text_anchor="middle")
+    out = tmp_path / "rich.pptx"
+    build_deck(FIX / "biology_dark.pptx", [content], {}, out)
+    slide = Presentation(str(out)).slides[0]
+    t_shape, b_shape = (next(s for s in slide.shapes if s.has_text_frame and s.text_frame.text.startswith(p)) for p in ("Solving", "• Use"))
+
+    plain, strong = _runs(t_shape)
+    assert strong.text == "Quadratics" and strong.font.bold and strong.font.size.pt == 44
+    assert str(strong.font.color.rgb) == "C00000" and strong.font.name == "Georgia"
+    assert str(plain.font.color.rgb) == "F4D35E", "unset runs keep the template colour"
+    assert plain.font.name == "Georgia" and plain.font.size.pt == 40, "unset runs keep the template font and size"
+
+    use, formula, check, rest = _runs(b_shape)
+    assert use.text == "• Use the ", "the template's typed bullet is kept"
+    assert formula.font.italic and formula.font.underline
+    rpr = formula._r.find(qn("a:rPr"))
+    assert rpr.find(qn("a:highlight")).find(qn("a:srgbClr")).get("val") == "FFFF00"
+    order = [c.tag.split("}")[1] for c in rpr]
+    assert order.index("solidFill") < order.index("highlight") < order.index("latin"), order
+    assert check._r.find(qn("a:rPr")).get("b") == "0"
+    assert all(p.alignment == 2 for p in b_shape.text_frame.paragraphs)  # PP_ALIGN.CENTER
+    assert b_shape.text_frame._txBody.find(qn("a:bodyPr")).get("anchor") == "ctr"
+
+
+def _pic_boxes(slide):
+    return [(s.left, s.top, s.width, s.height) for s in slide.shapes if s.shape_type == 13]
+
+
+def test_image_positions(tmp_path):
+    """Left/right/top split the sample's content area between picture and body; large moves
+    bullets to the notes; none drops the picture."""
+    photo = _img(tmp_path / "photo.png", "#2255aa", (800, 600), "PHOTO")
+    base = dict(kind="image", title="Look closely", bullets=["Label the parts", "Explain each one"])
+    contents = [
+        SlideContent(page=n, image_position=pos, **base)
+        for n, pos in enumerate(["left", "right", "top", "large", "none"], 1)
+    ]
+    out = tmp_path / "positions.pptx"
+    warnings = build_deck(FIX / "biology_dark.pptx", contents, {n: photo for n in range(1, 6)}, out)
+    left, right, top, large, none = Presentation(str(out)).slides
+
+    def body(slide):
+        return next(s for s in slide.shapes if s.has_text_frame and "Label the parts" in s.text_frame.text)
+
+    (pic,) = _pic_boxes(left)
+    assert pic[0] + pic[2] <= body(left).left, "picture left of the text"
+    (pic,) = _pic_boxes(right)
+    assert body(right).left + body(right).width <= pic[0], "picture right of the text"
+    (pic,) = _pic_boxes(top)
+    assert pic[1] + pic[3] <= body(top).top, "picture above the text"
+    (pic,) = _pic_boxes(large)
+    assert "Label the parts" in large.notes_slide.notes_text_frame.text
+    assert not any(s.has_text_frame and "Label the parts" in s.text_frame.text for s in large.shapes)
+    assert any("speaker notes" in w for w in warnings)
+    assert _pic_boxes(none) == [], "no picture, and the sample's own picture is gone too"

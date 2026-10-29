@@ -28,7 +28,7 @@ from .pptx_analysis import (
     resolve_pt,
     shape_by_id,
 )
-from .schemas import SlideContent
+from .schemas import SlideContent, TextRun
 
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 SHAPE_TAGS = {qn("p:sp"), qn("p:pic"), qn("p:grpSp"), qn("p:graphicFrame"), qn("p:cxnSp")}
@@ -135,6 +135,73 @@ def _set_para_text(p, text: str) -> None:
     t.text = text
 
 
+# Child order inside <a:rPr> is fixed by the schema; PowerPoint repairs files that break it.
+_RPR_ORDER = {
+    qn(f"a:{tag}"): i
+    for i, tag in enumerate(
+        "ln noFill solidFill gradFill blipFill pattFill grpFill effectLst effectDag highlight "
+        "uLnTx uLn uFillTx uFill latin ea cs sym hlinkClick hlinkMouseOver rtl extLst".split()
+    )
+}
+_FILLS = {qn(f"a:{tag}") for tag in ("noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill")}
+_ALIGN = {"left": "l", "center": "ctr", "right": "r"}
+_ANCHOR = {"top": "t", "middle": "ctr", "bottom": "b"}
+
+
+def _srgb(parent_tag: str, hex_color: str):
+    el = etree.Element(qn(parent_tag))
+    etree.SubElement(el, qn("a:srgbClr")).set("val", hex_color.lstrip("#").upper())
+    return el
+
+
+def _style_run(r, run: TextRun) -> None:
+    """Applies the teacher's formatting on top of the run's template formatting."""
+    rpr = r.find(qn("a:rPr"))
+    if rpr is None:
+        rpr = etree.Element(qn("a:rPr"))
+        r.insert(0, rpr)
+    for attr, value, on in (("b", run.bold, "1"), ("i", run.italic, "1"), ("u", run.underline, "sng")):
+        if value is not None:
+            rpr.set(attr, on if value else ("none" if attr == "u" else "0"))
+    if run.size:
+        rpr.set("sz", str(int(round(run.size * 100))))
+    if run.color:
+        for el in [c for c in rpr if c.tag in _FILLS]:
+            rpr.remove(el)
+        rpr.append(_srgb("a:solidFill", run.color))
+    if run.highlight:
+        for el in rpr.findall(qn("a:highlight")):
+            rpr.remove(el)
+        rpr.append(_srgb("a:highlight", run.highlight))
+    if run.font:
+        for tag in ("a:latin", "a:ea", "a:cs"):
+            for el in rpr.findall(qn(tag)):
+                rpr.remove(el)
+        for tag in ("a:latin", "a:cs"):
+            etree.SubElement(rpr, qn(tag)).set("typeface", run.font)
+    rpr[:] = sorted(rpr, key=lambda c: _RPR_ORDER.get(c.tag, len(_RPR_ORDER)))
+
+
+def _set_para_runs(p, runs: list[TextRun], prefix: str) -> None:
+    _set_para_text(p, "")  # one run left, carrying the template's formatting
+    proto = p.find(qn("a:r"))
+    for i, run in enumerate(runs or [TextRun(text="")]):
+        r = copy.deepcopy(proto)
+        r.find(qn("a:t")).text = (prefix if i == 0 else "") + run.text
+        _style_run(r, run)
+        proto.addprevious(r)
+    p.remove(proto)
+
+
+def _set_align(p, align: str) -> None:
+    if align in _ALIGN:
+        ppr = p.find(qn("a:pPr"))
+        if ppr is None:
+            ppr = etree.Element(qn("a:pPr"))
+            p.insert(0, ppr)
+        ppr.set("algn", _ALIGN[align])
+
+
 def _ensure_spacing(p) -> None:
     ppr = p.find(qn("a:pPr"))
     if ppr is None:
@@ -184,10 +251,23 @@ def _apply_size(txbody, pt: float) -> None:
             end.set("sz", str(int(pt * 100)))
 
 
-def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str], label: str) -> None:
-    lines = [ln.strip() for ln in lines if ln and ln.strip()]
-    if not lines:
-        lines = [""]
+def fill_text(
+    shape,
+    slide,
+    lines: list[str] | list[list[TextRun]],
+    is_title: bool,
+    warnings: list[str],
+    label: str,
+    align: str = "auto",
+    anchor: str = "auto",
+) -> None:
+    """Fills a shape with plain lines or formatted paragraphs (lists of runs), one per line."""
+    blocks = [[TextRun(text=ln)] if isinstance(ln, str) else [r for r in ln if r.text] for ln in lines]
+    blocks = [runs for runs in blocks if "".join(r.text for r in runs).strip()] or [[TextRun(text="")]]
+    for runs in blocks:  # trim the paragraph's ends, like plain lines are trimmed
+        runs[0] = runs[0].model_copy(update={"text": runs[0].text.lstrip()})
+        runs[-1] = runs[-1].model_copy(update={"text": runs[-1].text.rstrip()})
+    lines = ["".join(r.text for r in runs) for runs in blocks]
     tx = shape.text_frame._txBody
     paras = tx.findall(qn("a:p"))
     template = max(paras, key=lambda p: len(_para_text(p)), default=None)
@@ -198,17 +278,25 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
 
     for p in paras:
         tx.remove(p)
-    for line in lines:
+    for line, runs in zip(lines, blocks):
         p = copy.deepcopy(template)
-        _set_para_text(p, prefix + line if line and not LITERAL_BULLET.match(line) else line)
+        _set_para_runs(p, runs, prefix if line and not LITERAL_BULLET.match(line) else "")
+        _set_align(p, align)
         if len(lines) > 1 and not shape.is_placeholder:
             _ensure_spacing(p)
         tx.append(p)
+    if anchor in _ANCHOR:
+        tx.find(qn("a:bodyPr")).set("anchor", _ANCHOR[anchor])
 
     indent = 0 if is_title else 18
-    pt, fits = _fit_pt(shape, lines, base_pt, MIN_TITLE_PT if is_title else MIN_BODY_PT, indent)
-    if pt < base_pt:
-        _apply_size(tx, pt)
+    sized = [r.size for runs in blocks for r in runs if r.size]
+    if sized:
+        # The teacher picked sizes: keep them, only warn if they look too big.
+        pt, fits = _fit_pt(shape, lines, max(sized), max(sized), indent)
+    else:
+        pt, fits = _fit_pt(shape, lines, base_pt, MIN_TITLE_PT if is_title else MIN_BODY_PT, indent)
+        if pt < base_pt:
+            _apply_size(tx, pt)
     if not fits:
         warnings.append(f"{label}: text is long for this style and may overflow. Consider shortening it.")
 
@@ -269,6 +357,49 @@ def _side_image(prs, target: Target, image_path: Path, alt: str) -> None:
         top = int(slide_h * 0.32)
         box = (int(slide_w * 0.5), top, int(slide_w * 0.5) - margin, int(slide_h * 0.6))
     _place_picture(target.slide, box, image_path, alt)
+
+
+def _content_area(prs, target: Target) -> tuple[int, int, int, int]:
+    """The space the sample slide gives to its body and picture together."""
+    boxes = [_box_of(target.body)] if target.body is not None else []
+    boxes += [b for b in (_element_box(e) for e in target.picture_els) if b]
+    if boxes:
+        left, top = min(b[0] for b in boxes), min(b[1] for b in boxes)
+        right, bottom = max(b[0] + b[2] for b in boxes), max(b[1] + b[3] for b in boxes)
+        return left, top, right - left, bottom - top
+    slide_w, slide_h = prs.slide_width, prs.slide_height
+    margin = int(0.6 * 914400)
+    top = int(slide_h * 0.25)
+    if target.title is not None:
+        top = max(top, int(target.title.top + target.title.height + 0.2 * 914400))
+    return margin, top, slide_w - 2 * margin, int(slide_h * 0.9) - top
+
+
+def _arrange(prs, target: Target, image_path: Path, position: str, alt: str) -> None:
+    """Puts the picture where the teacher chose and gives the body the rest of the area."""
+    left, top, width, height = _content_area(prs, target)
+    for el in target.picture_els:
+        if el.getparent() is not None:
+            el.getparent().remove(el)
+    target.picture_els = []
+    gap = int(0.3 * 914400)
+    split_w, split_h = int(width * 0.45), int(height * 0.55)
+    text_box = None
+    if position == "left":
+        image_box = (left, top, split_w, height)
+        text_box = (left + split_w + gap, top, width - split_w - gap, height)
+    elif position == "right":
+        text_box = (left, top, width - split_w - gap, height)
+        image_box = (left + width - split_w, top, split_w, height)
+    elif position == "top":
+        image_box = (left, top, width, split_h)
+        text_box = (left, top + split_h + gap, width, height - split_h - gap)
+    else:  # large
+        image_box = (left, top, width, height)
+    if target.body is not None and text_box is not None:
+        body = target.body
+        body.left, body.top, body.width, body.height = (Emu(v) for v in text_box)
+    _place_picture(target.slide, image_box, image_path, alt)
 
 
 # --------------------------------------------------------------------------- #
@@ -371,18 +502,35 @@ def build_deck(
             target = _layout_target(prs, kind)
             slide = target.slide
 
+        # ---- layout chosen by the teacher -------------------------------- #
+        alt = f"Image for {label}: {content.title}"
+        position = content.image_position if image else "auto"
+        if position == "none":
+            image = None
+        elif position != "auto":
+            _arrange(prs, target, image, position, alt)
+            image = None  # placed
+
         # ---- text ------------------------------------------------------- #
+        align, anchor = content.text_align, content.text_anchor
         if target.title is not None:
-            fill_text(target.title, slide, [content.title or label], True, warnings, f"{label} title")
+            title = [content.title_runs] if content.title_runs else [content.title or label]
+            fill_text(target.title, slide, title, True, warnings, f"{label} title", align)
         else:
             warnings.append(f"{label}: the chosen sample slide has no title area, so the title was skipped.")
 
-        body_lines = list(content.bullets)
-        if content.kind in ("title", "section") and not body_lines:
+        body_lines = list(content.body_runs) if content.body_runs is not None else list(content.bullets)
+        if content.body_runs is None and content.kind in ("title", "section") and not body_lines:
             body_lines = [content.subtitle] if content.subtitle else []
+        if position == "large" and body_lines and target.body is not None:
+            # The picture fills the content area: the bullets go to the speaker notes.
+            texts = [b if isinstance(b, str) else "".join(r.text for r in b) for b in body_lines]
+            content = content.model_copy(update={"notes": "\n".join([*texts, content.notes]).strip()})
+            warnings.append(f"{label}: the picture fills the slide, so the bullet points were moved to the speaker notes.")
+            body_lines = []
         if target.body is not None:
             if body_lines or not target.body.is_placeholder:
-                fill_text(target.body, slide, body_lines or [""], False, warnings, f"{label} body")
+                fill_text(target.body, slide, body_lines or [""], False, warnings, f"{label} body", align, anchor)
             else:
                 target.body._element.getparent().remove(target.body._element)
                 target.body = None
@@ -390,7 +538,6 @@ def build_deck(
             warnings.append(f"{label}: the chosen sample slide has no body area, so the bullet points were skipped.")
 
         # ---- picture ---------------------------------------------------- #
-        alt = f"Image for {label}: {content.title}"
         if image:
             if target.picture_els:
                 biggest = max(target.picture_els, key=lambda e: (_element_box(e) or (0, 0, 0, 0))[2] * (_element_box(e) or (0, 0, 0, 0))[3])

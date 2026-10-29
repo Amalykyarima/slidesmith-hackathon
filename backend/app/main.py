@@ -17,7 +17,7 @@ from . import ai, config, db
 from .generator import build_deck
 from .previews import previews_available, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile
-from .schemas import GenerateRequest, SlideContent
+from .schemas import GenerateRequest, RebuildRequest, SlideContent
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidesmith")
@@ -73,6 +73,7 @@ def _generation_out(row: dict) -> dict:
         "slides": db.loads(row["slides"], []),
         "warnings": db.loads(row["warnings"], []),
         "download_url": f"/api/generations/{row['id']}/download",
+        "image_pages": [sl["page"] for sl in db.loads(row["request"], {}).get("slides", []) if sl.get("image_id")],
         "preview_status": row["preview_status"],
         "previews": _preview_urls("generations", row["id"], row["preview_count"]),
     }
@@ -262,6 +263,17 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     if req.cover:
         contents.insert(0, SlideContent(page=0, kind="title", title=req.title.strip(), subtitle=req.subtitle.strip()))
 
+    return _build_and_save(style_path, req, contents, image_paths, mode, background)
+
+
+def _build_and_save(
+    style_path: Path,
+    req: GenerateRequest,
+    contents: list[SlideContent],
+    image_paths: dict[int, Path],
+    mode: str,
+    background: BackgroundTasks,
+) -> dict:
     gen_id = uuid.uuid4().hex[:12]
     out_path = config.OUTPUTS_DIR / f"{gen_id}.pptx"
     try:
@@ -288,6 +300,30 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     if previews_available():
         background.add_task(_render_in_background, "generations", "generations", gen_id, out_path)
     return _generation_out(db.one("SELECT * FROM generations WHERE id=?", (gen_id,)))
+
+
+@app.post("/api/generations/{gen_id}/rebuild", status_code=201)
+def rebuild_generation(gen_id: str, body: RebuildRequest, background: BackgroundTasks):
+    """Builds the teacher's edited slides again, in the same style, without calling the AI."""
+    row = db.one("SELECT * FROM generations WHERE id=?", (gen_id,))
+    if not row:
+        raise HTTPException(404, "Those slides no longer exist. Generate them again.")
+    style = db.one("SELECT * FROM styles WHERE id=?", (row["style_id"],))
+    if not style:
+        raise HTTPException(404, "The style these slides used was deleted, so they can't be rebuilt.")
+    req = GenerateRequest.model_validate(db.loads(row["request"]))
+
+    known = {s.page for s in req.slides} | ({0} if req.cover else set())
+    pages = [s.page for s in body.slides]
+    if len(set(pages)) != len(pages) or not set(pages) <= known:
+        raise HTTPException(400, "The edited slides don't match the original deck. Refresh and try again.")
+
+    image_paths: dict[int, Path] = {}
+    for spec in req.slides:
+        img = db.one("SELECT * FROM images WHERE id=?", (spec.image_id,)) if spec.image_id else None
+        if img and Path(img["path"]).exists():
+            image_paths[spec.page] = Path(img["path"])
+    return _build_and_save(Path(style["path"]), req, list(body.slides), image_paths, row["mode"], background)
 
 
 @app.get("/api/generations")

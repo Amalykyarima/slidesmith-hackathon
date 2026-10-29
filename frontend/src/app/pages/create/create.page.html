@@ -223,6 +223,9 @@
       </div>
       <div class="row">
         <button type="button" class="btn" (click)="newDeck()">Start a new deck</button>
+        <button type="button" class="btn" [attr.aria-expanded]="editing()" (click)="editing.set(!editing())">
+          {{ editing() ? 'Close editor' : 'Edit slides' }}
+        </button>
         <a class="btn btn-primary" [href]="r.download_url" download>Download .pptx</a>
       </div>
     </div>
@@ -251,6 +254,10 @@
       <p class="muted small"><span class="spinner"></span> Rendering previews… you can already download the file.</p>
     } @else if (r.preview_status === 'unavailable') {
       <p class="muted small">Previews need LibreOffice installed on the server. The download works without it.</p>
+    }
+
+    @if (editing()) {
+      <app-slide-editor [generation]="r" [fonts]="fontsFor(r)" (rebuilt)="onRebuilt($event)" />
     }
 
     <details class="outline">

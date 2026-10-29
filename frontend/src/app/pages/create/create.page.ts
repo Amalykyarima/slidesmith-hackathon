@@ -4,6 +4,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { GenerateRequest, Generation, SlideStyle, UploadedImage } from '../../core/models';
+import { SlideEditor } from './slide-editor';
 
 /** One numbered slide; its page number is its position in the list. */
 interface Row {
@@ -18,7 +19,7 @@ const DRAFT_KEY = 'slidesmith.draft.v1';
 
 @Component({
   selector: 'app-create-page',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, SlideEditor],
   templateUrl: './create.page.html',
   styleUrl: './create.page.css',
 })
@@ -43,6 +44,7 @@ export class CreatePage {
   protected readonly generating = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly result = signal<Generation | null>(null);
+  protected readonly editing = signal(false);
 
   /** Key of the row being dragged, for drag-to-reorder. */
   protected readonly dragKey = signal<number | null>(null);
@@ -211,6 +213,7 @@ export class CreatePage {
 
     try {
       const generation = await firstValueFrom(this.api.generate(request));
+      this.editing.set(false);
       this.result.set(generation);
       this.pollPreviews(generation.id, 0);
       setTimeout(() => document.getElementById('result')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
@@ -235,7 +238,19 @@ export class CreatePage {
     }, 2000);
   }
 
+  /** Fonts offered in the slide editor: the style's own first. */
+  protected fontsFor(r: Generation): string[] {
+    return this.styles().find((s) => s.id === r.style_id)?.profile.fonts ?? [];
+  }
+
+  protected onRebuilt(generation: Generation): void {
+    clearTimeout(this.pollTimer);
+    this.result.set(generation);
+    this.pollPreviews(generation.id, 0);
+  }
+
   protected newDeck(): void {
+    this.editing.set(false);
     this.result.set(null);
     this.cover.set(true);
     this.title.set('');

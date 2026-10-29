@@ -115,3 +115,36 @@ def test_cover_slide_comes_first_in_order():
 
         no_title = {**body, "title": "  "}
         assert c.post("/api/generate", json=no_title).status_code == 400
+
+
+def test_rebuild_applies_edits_without_ai():
+    with TestClient(app) as c:
+        style = c.post("/api/styles", files={"file": ("biology_dark.pptx", (FIX / "biology_dark.pptx").read_bytes())}).json()
+        image_id = c.post("/api/images", files={"file": ("cell.png", (FIX / "sample_diagram.png").read_bytes())}).json()["id"]
+        gen = c.post("/api/generate", json={
+            "style_id": style["id"], "title": "Cells", "cover": True,
+            "slides": [
+                {"page": 1, "details": "Parts of a cell\nNucleus\nMembrane"},
+                {"page": 2, "details": "Label the diagram", "image_id": image_id},
+            ],
+        }).json()
+
+        slides = gen["slides"]
+        slides[1]["title_runs"] = [{"text": "Parts of a "}, {"text": "cell", "bold": True, "color": "#00B050"}]
+        slides[2]["image_position"] = "left"
+        r = c.post(f"/api/generations/{gen['id']}/rebuild", json={"slides": slides})
+        assert r.status_code == 201, r.text
+        new = r.json()
+        assert new["id"] != gen["id"] and new["mode"] == gen["mode"] and new["title"] == "Cells"
+        assert new["slides"][1]["title_runs"][1]["bold"] is True
+
+        prs = Presentation(str(Path(os.environ["STORAGE_DIR"]) / "outputs" / f"{new['id']}.pptx"))
+        assert len(prs.slides) == 3
+        title_run = next(r for sh in prs.slides[1].shapes if sh.has_text_frame
+                         for p in sh.text_frame.paragraphs for r in p.runs if r.text == "cell")
+        assert title_run.font.bold and str(title_run.font.color.rgb) == "00B050"
+        assert any(sh.shape_type == 13 for sh in prs.slides[2].shapes), "the original picture is reused"
+
+        assert c.post("/api/generations/nope/rebuild", json={"slides": slides}).status_code == 404
+        bad = [*slides, {**slides[1], "page": 9}]
+        assert c.post(f"/api/generations/{gen['id']}/rebuild", json={"slides": bad}).status_code == 400
