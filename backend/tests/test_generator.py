@@ -323,7 +323,7 @@ def test_box_shorter_than_its_own_text_still_fits_one_line():
     from app.generator import _fit_pt
 
     label = SimpleNamespace(width=Inches(7), height=Inches(0.34))  # 28pt text in a 0.34" box
-    assert _fit_pt(label, ["Cells"], 28, 24) == (28, True)
+    assert _fit_pt(label, ["Cells"], 28, 24)[:2] == (28, True)
     assert _fit_pt(label, ["A much longer title that needs two lines in this box, surely"], 28, 24)[1] is False
 
 
@@ -331,3 +331,36 @@ def test_live_preview_look_follows_the_layout_placeholder(tmp_path):
     layouts = blank_layouts(FIX / "inherited.pptx", tmp_path / "blank.pptx")
     cover = layouts[0]["title_look"]
     assert cover["color"] == "#FFFFFF" and cover["bold"] is True, cover
+
+
+def test_long_text_grows_into_free_space_without_covering_the_design(tmp_path):
+    out = tmp_path / "long.pptx"
+    long_title = "Quadratic Equations and how to solve them by completing the square"
+    steps = [f"Step {n}: substitute the coefficients and simplify the expression carefully" for n in range(1, 9)]
+    warnings = build_deck(
+        FIX / "short_boxes.pptx",
+        [
+            SlideContent(page=0, kind="title", title=long_title),
+            SlideContent(page=1, kind="content", title="Worked example", bullets=steps),
+        ],
+        {},
+        out,
+    )
+    prs = Presentation(str(out))
+    cover = prs.slides[0]
+    title = next(sh for sh in cover.shapes if sh.has_text_frame and sh.text_frame.text == long_title)
+    logos = next(sh for sh in cover.shapes if sh.name == "Partner logos")
+    assert title.height > Inches(0.4), "the title box grew"
+    assert title.top + title.height <= logos.top, "but stopped above the logos"
+    body = next(sh for sh in prs.slides[1].shapes if sh.has_text_frame and "Step 1" in sh.text_frame.text)
+    assert body.height > Inches(2), "the body grew down the empty slide"
+    sizes = [r.font.size.pt for p in body.text_frame.paragraphs for r in p.runs if r.font.size]
+    assert min(sizes) >= 14, "and kept a readable size"
+    assert not any("overflow" in w for w in warnings), warnings
+
+
+def test_untitled_slide_has_no_made_up_title(tmp_path):
+    out = tmp_path / "untitled.pptx"
+    build_deck(FIX / "short_boxes.pptx", [SlideContent(page=1, kind="content", bullets=["Just a point"])], {}, out)
+    text = " ".join(sh.text_frame.text for sh in Presentation(str(out)).slides[0].shapes if sh.has_text_frame)
+    assert "Slide 1" not in text and "Just a point" in text

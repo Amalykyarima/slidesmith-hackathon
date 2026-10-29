@@ -178,7 +178,7 @@ def delete_style(style_id: str):
 
 
 # Bump when the layout description changes, so cached ones are made again.
-LAYOUTS_VERSION = 2
+LAYOUTS_VERSION = 3
 
 
 def _layouts_dir(style_id: str) -> Path:

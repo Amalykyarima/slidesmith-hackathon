@@ -199,6 +199,24 @@ def inherited_deck():
     prs.save(OUT / "inherited.pptx")
 
 
+def short_boxes_deck():
+    """Designer-style boxes sized to one line of sample text, with a logo strip under the cover title."""
+    from pptx.enum.shapes import MSO_SHAPE
+
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(10), Inches(5.625)
+    blank = prs.slide_layouts[6]
+    s = prs.slides.add_slide(blank)
+    bg(s, "1D3557")
+    tb(s, 0.7, 2.4, 7.2, 0.4, "Build the Internal Marketplace", 28, "FFFFFF", bold=True, font="Arial")
+    logos = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.7), Inches(3.9), Inches(3.6), Inches(0.45))
+    logos.name = "Partner logos"
+    s = prs.slides.add_slide(blank)
+    tb(s, 0.4, 0.3, 8.2, 0.6, "Why it matters", 24, "162141", bold=True, font="Arial")
+    tb(s, 0.4, 1.0, 9.0, 0.85, ["Teams rebuild the same thing", "Nothing is shared"], 16, "162141", font="Arial")
+    prs.save(OUT / "short_boxes.pptx")
+
+
 if __name__ == "__main__":
     textbox_deck()
     placeholder_deck()
@@ -206,3 +224,4 @@ if __name__ == "__main__":
     dressed_deck()
     print("fixtures written to", OUT)
     inherited_deck()
+    short_boxes_deck()

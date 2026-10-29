@@ -174,6 +174,7 @@ def test_blank_layouts_describe_where_text_goes():
         content = data["layouts"][1]
         assert content["title"] and content["body"] and content["body_look"]["size"] > 0
         assert all(0 <= v <= 1.01 for v in content["title"])
+        assert content["body_room"] >= content["body"][3] and content["title_room"][1] >= content["title_room"][0]
         again = c.get(f"/api/styles/{style['id']}/layouts").json()
         assert again["layouts"][1]["title"] == content["title"], "cached"
         assert c.get("/api/styles/nope/layouts").status_code == 404

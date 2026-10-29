@@ -180,7 +180,6 @@ export interface BuiltState {
                 [tone]="tone()"
                 [fallback]="fallback()"
                 [cover]="cover()"
-                [label]="label()"
                 [loading]="layoutLoading() || b.rendering"
               />
               @if (b.rendering) {

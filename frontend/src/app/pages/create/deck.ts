@@ -81,7 +81,16 @@ export function fromContent(s: EditSlide, c: SlideContent, hasCover: boolean): E
 }
 
 /** Where the title, body and picture land: mirrors the generator's preset positions. */
-export function arrange(layout: Layout, s: EditSlide, size: [number, number]): { title: Box | null; body: Box | null; picture: Box | null } {
+export interface Arranged {
+  title: Box | null;
+  body: Box | null;
+  picture: Box | null;
+  /** How tall the title and body may grow (fractions of the slide). */
+  titleRoom: number | null;
+  bodyRoom: number | null;
+}
+
+export function arrange(layout: Layout, s: EditSlide, size: [number, number]): Arranged {
   const [w, h] = size;
   const gapX = 0.3 / w;
   const gapY = 0.3 / h;
@@ -118,5 +127,77 @@ export function arrange(layout: Layout, s: EditSlide, size: [number, number]): {
       }
     }
   }
-  return { title: layout.title, body, picture };
+  // An empty body is dropped by the build, which gives the title more room.
+  if (!s.body.some((p) => plain(p).trim())) body = null;
+  const moved = body !== layout.body;
+  const bodyRoom = body ? (moved ? Math.max(body[3], 1 - 0.35 / h - body[1]) : layout.body_room) : null;
+  return { title: layout.title, body, picture, titleRoom: layout.title_room[body ? 0 : 1], bodyRoom };
+}
+
+// ----------------------------------------------------------------------------- text fitting
+// Mirrors generator.py (fill_text / _fit_pt), so the live preview sizes text like the build.
+const CHAR_W_TITLE = 0.66;
+const CHAR_W_BODY = 0.56;
+const MIN_TITLE_PT = 24;
+const MIN_BODY_PT = 14;
+
+function wrappedLines(line: string, cap: number): number {
+  let count = 1;
+  let used = 0;
+  for (const word of line.split(/\s+/).filter(Boolean)) {
+    const n = word.length;
+    if (used && used + 1 + n <= cap) {
+      used += 1 + n;
+      continue;
+    }
+    if (used) count += 1;
+    const breaks = n > cap ? Math.floor((n - 1) / cap) : 0;
+    count += breaks;
+    used = n - breaks * cap;
+  }
+  return count;
+}
+
+function estimateHeight(lines: string[], pt: number, widthPt: number, charW: number): number {
+  const cap = Math.max(widthPt / (pt * charW), 1);
+  const n = lines.reduce((sum, line) => sum + wrappedLines(line, cap), 0);
+  return n * pt * 1.2 + Math.max(lines.length - 1, 0) * pt * 0.3;
+}
+
+export interface Fit {
+  /** Size for runs the teacher didn't size. */
+  pt: number;
+  /** Box height after growing, as a fraction of the slide. */
+  height: number;
+}
+
+/** Size and height a text box ends up with: it grows into `room` first, then the text shrinks. */
+export function fitText(
+  paragraphs: TextRun[][],
+  box: Box,
+  room: number | null,
+  basePt: number,
+  isTitle: boolean,
+  size: [number, number],
+): Fit {
+  const [w, h] = size;
+  const lines = paragraphs.map(plain).filter((line) => line.trim());
+  const indent = isTitle ? 0 : 18;
+  const width = box[2] * w * 72 - 14.4 - indent;
+  const boxPt = box[3] * h * 72;
+  if (!lines.length || width <= 0 || boxPt <= 7.2) return { pt: basePt, height: box[3] };
+  const sized = paragraphs.flat().map((r) => r.size ?? 0).filter((v) => v > 0);
+  const charW = isTitle ? CHAR_W_TITLE : CHAR_W_BODY;
+  const roomPt = (room ?? box[3]) * h * 72;
+  const available = Math.max(boxPt - 7.2, basePt * 1.2, roomPt - 7.2);
+  const start = sized.length ? Math.max(...sized) : basePt;
+  const min = sized.length ? start : isTitle ? MIN_TITLE_PT : MIN_BODY_PT;
+  let pt = start;
+  let need = estimateHeight(lines, pt, width, charW);
+  while (need > available && pt - 1 >= min) {
+    pt -= 1;
+    need = estimateHeight(lines, pt, width, charW);
+  }
+  const grown = Math.min(need + 7.2, Math.max(roomPt, boxPt));
+  return { pt: sized.length ? basePt : pt, height: Math.max(box[3], grown / 72 / h) };
 }

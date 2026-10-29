@@ -117,6 +117,9 @@ export interface Layout {
   picture: Box | null;
   /** Space the body and picture share; preset picture positions split it. */
   area: Box;
+  /** How tall the title may grow (fraction of the slide): with the body there, and without it. */
+  title_room: [number | null, number | null];
+  body_room: number | null;
   title_look: TextLook | null;
   body_look: TextLook | null;
   /** The blank slide rendered, once ready. */

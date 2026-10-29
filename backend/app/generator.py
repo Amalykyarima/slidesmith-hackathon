@@ -220,26 +220,85 @@ def _ensure_spacing(p) -> None:
         ppr.insert(0, spc)
 
 
-def _estimate_height(lines: list[str], pt: float, width_pt: float) -> float:
-    chars_per_line = max(width_pt / (pt * 0.5), 1)
-    n_lines = sum(max(1, math.ceil(len(line) / chars_per_line)) for line in lines)
+# Average character width as a share of the font size, on the wide side (previews substitute
+# DejaVu Sans for fonts the server lacks). Titles are usually bold, so wider.
+CHAR_W_TITLE = 0.66
+CHAR_W_BODY = 0.56
+
+
+def _wrapped_lines(line: str, cap: float) -> int:
+    """Lines a paragraph takes when words wrap at `cap` characters (very long words break)."""
+    count, used = 1, 0
+    for word in line.split():
+        n = len(word)
+        if used and used + 1 + n <= cap:
+            used += 1 + n
+            continue
+        if used:
+            count += 1
+        count += int((n - 1) // cap) if n > cap else 0
+        used = n - int((n - 1) // cap) * cap if n > cap else n
+    return count
+
+
+def _estimate_height(lines: list[str], pt: float, width_pt: float, char_w: float = CHAR_W_BODY) -> float:
+    cap = max(width_pt / (pt * char_w), 1)
+    n_lines = sum(_wrapped_lines(line, cap) for line in lines)
     return n_lines * pt * 1.2 + max(len(lines) - 1, 0) * pt * 0.3
 
 
-def _fit_pt(shape, lines: list[str], base_pt: float, min_pt: float, indent_pt: float = 0) -> tuple[float, bool]:
+def _fit_pt(
+    shape,
+    lines: list[str],
+    base_pt: float,
+    min_pt: float,
+    indent_pt: float = 0,
+    room: int | None = None,
+    char_w: float = CHAR_W_BODY,
+) -> tuple[float, bool, float]:
+    """
+    Largest size from base_pt down to min_pt at which the text fits, letting the box grow down to
+    `room` (EMU) first. Returns (pt, fits, height in points the text needs).
+    """
     width = (shape.width or 0) / EMU_PER_PT - 14.4 - indent_pt
     height = (shape.height or 0) / EMU_PER_PT - 7.2
     if width <= 0 or height <= 0:
-        return base_pt, True
+        return base_pt, True, height
     # Some designs use a box shorter than one line of their own text: it's meant to grow.
-    height = max(height, base_pt * 1.2)
+    height = max(height, base_pt * 1.2, (room or 0) / EMU_PER_PT - 7.2)
     pt = base_pt
     while True:
-        if _estimate_height(lines, pt, width) <= height:
-            return pt, True
+        need = _estimate_height(lines, pt, width, char_w)
+        if need <= height:
+            return pt, True, need
         if pt - 1 < min_pt:
-            return max(pt, min_pt), False
+            return max(pt, min_pt), False, need
         pt -= 1
+
+
+GROW_MARGIN = int(0.35 * 914400)  # free space kept at the bottom of the slide
+GROW_GAP = int(0.08 * 914400)  # space kept above the next shape
+
+
+def room_below(slide, shape, ignore: tuple = ()) -> int:
+    """How tall (EMU) a text box may grow downward before it reaches a shape below it or the slide's foot."""
+    prs = slide.part.package.presentation_part.presentation
+    slide_w, slide_h = prs.slide_width, prs.slide_height
+    left, top, width, height = _box_of(shape)
+    limit = slide_h - GROW_MARGIN
+    skip = {shape._element, *(el for el in ignore if el is not None)}
+    others = [s for s in slide.shapes if s._element not in skip]
+    others += [s for s in slide.slide_layout.shapes if not s.is_placeholder]
+    for other in others:
+        if other.width is None or other.top is None:
+            continue
+        ol, ot, ow, oh = _box_of(other)
+        if ow * oh >= 0.5 * slide_w * slide_h:  # backgrounds
+            continue
+        if ot < top + height - GROW_GAP or ol >= left + width or ol + ow <= left:
+            continue  # not below this box
+        limit = min(limit, ot - GROW_GAP)
+    return max(limit - top, height)
 
 
 def _apply_size(txbody, pt: float) -> None:
@@ -294,14 +353,21 @@ def fill_text(
         tx.find(qn("a:bodyPr")).set("anchor", _ANCHOR[anchor])
 
     indent = 0 if is_title else 18
+    char_w = CHAR_W_TITLE if is_title else CHAR_W_BODY
+    room = room_below(slide, shape)
     sized = [r.size for runs in blocks for r in runs if r.size]
     if sized:
         # The teacher picked sizes: keep them, only warn if they look too big.
-        pt, fits = _fit_pt(shape, lines, max(sized), max(sized), indent)
+        pt, fits, need = _fit_pt(shape, lines, max(sized), max(sized), indent, room, char_w)
     else:
-        pt, fits = _fit_pt(shape, lines, base_pt, MIN_TITLE_PT if is_title else MIN_BODY_PT, indent)
+        pt, fits, need = _fit_pt(shape, lines, base_pt, MIN_TITLE_PT if is_title else MIN_BODY_PT, indent, room, char_w)
         if pt < base_pt:
             _apply_size(tx, pt)
+    # Long text: let the box grow into the free space below it before anything overflows.
+    grown = Emu(int(min(need + 7.2, room / EMU_PER_PT) * EMU_PER_PT))
+    if grown > shape.height:
+        # Set the whole box: a placeholder may inherit its position, and a partial one is invalid.
+        shape.left, shape.top, shape.width, shape.height = shape.left, shape.top, shape.width, grown
     if not fits:
         warnings.append(f"{label}: text is long for this style and may overflow. Consider shortening it.")
 
@@ -552,29 +618,34 @@ def build_deck(
 
         # ---- text ------------------------------------------------------- #
         align, anchor = content.text_align, content.text_anchor
-        if target.title is not None:
-            title = [content.title_runs] if content.title_runs else [content.title or label]
-            fill_text(target.title, slide, title, True, warnings, f"{label} title", align)
-        else:
-            warnings.append(f"{label}: the chosen sample slide has no title area, so the title was skipped.")
-
         body_lines = list(content.body_runs) if content.body_runs is not None else list(content.bullets)
         if content.body_runs is None and content.kind in ("title", "section") and not body_lines:
             body_lines = [content.subtitle] if content.subtitle else []
+        body_lines = [b for b in body_lines if (b if isinstance(b, str) else "".join(r.text for r in b)).strip()]
         if position == "large" and body_lines and target.body is not None:
             # The picture fills the content area: the bullets go to the speaker notes.
             texts = [b if isinstance(b, str) else "".join(r.text for r in b) for b in body_lines]
             content = content.model_copy(update={"notes": "\n".join([*texts, content.notes]).strip()})
             warnings.append(f"{label}: the picture fills the slide, so the bullet points were moved to the speaker notes.")
             body_lines = []
-        if target.body is not None:
-            if body_lines or not target.body.is_placeholder:
-                fill_text(target.body, slide, body_lines or [""], False, warnings, f"{label} body", align, anchor)
-            else:
-                target.body._element.getparent().remove(target.body._element)
-                target.body = None
-        elif body_lines and content.kind == "content":
+        if target.body is not None and not body_lines:
+            # Nothing to say there: drop the box, which also leaves the title room to grow.
+            target.body._element.getparent().remove(target.body._element)
+            target.body = None
+        elif target.body is None and body_lines and content.kind == "content":
             warnings.append(f"{label}: the chosen sample slide has no body area, so the bullet points were skipped.")
+
+        title_runs = content.title_runs if content.title_runs and "".join(r.text for r in content.title_runs).strip() else None
+        if target.title is not None and (title_runs or content.title.strip()):
+            fill_text(target.title, slide, [title_runs] if title_runs else [content.title], True, warnings, f"{label} title", align)
+        elif target.title is not None:
+            target.title._element.getparent().remove(target.title._element)  # left untitled on purpose
+            target.title = None
+        elif content.title.strip():
+            warnings.append(f"{label}: the chosen sample slide has no title area, so the title was skipped.")
+
+        if target.body is not None:
+            fill_text(target.body, slide, body_lines, False, warnings, f"{label} body", align, anchor)
 
         # ---- picture ---------------------------------------------------- #
         if image:
@@ -695,6 +766,11 @@ def blank_layouts(style_path: Path, out_path: Path) -> list[dict]:
         target = _make_target(prs, originals, infos, kind, Counter(), [], set())
         slide = target.slide
         pictures = [b for b in (_element_box(e) for e in target.picture_els) if b]
+        body_el = target.body._element if target.body is not None else None
+
+        def room(shape, ignore: tuple = ()) -> float | None:
+            return round(room_below(slide, shape, ignore) / slide_h, 4) if shape is not None else None
+
         layouts.append(
             {
                 "kind": kind,
@@ -702,6 +778,9 @@ def blank_layouts(style_path: Path, out_path: Path) -> list[dict]:
                 "body": _fraction(_box_of(target.body), slide_w, slide_h) if target.body is not None else None,
                 "picture": _fraction(max(pictures, key=lambda b: b[2] * b[3]), slide_w, slide_h) if pictures else None,
                 "area": _fraction(_content_area(prs, target), slide_w, slide_h),
+                # How tall each box may grow (fraction of the slide); the title has more room without a body.
+                "title_room": [room(target.title), room(target.title, (body_el,))],
+                "body_room": room(target.body),
                 "title_look": _look(target.title, slide, True, theme_colors, theme_fonts) if target.title is not None else None,
                 "body_look": _look(target.body, slide, False, theme_colors, theme_fonts) if target.body is not None else None,
             }
