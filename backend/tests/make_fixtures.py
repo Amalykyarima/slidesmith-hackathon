@@ -86,7 +86,44 @@ def placeholder_deck():
     prs.save(OUT / "maths_layouts.pptx")
 
 
+def leftovers_deck():
+    """Sample text in the places the generator used to miss: small labels, groups, a table.
+    A footer repeated on every slide is style and must survive."""
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    blank = prs.slide_layouts[6]
+    BG, TITLE, BODY = "1D3557", "F1FAEE", "A8DADC"
+    FOOTER = "Year 9 Science  |  Oak Hill School"
+
+    s = prs.slides.add_slide(blank); bg(s, BG)
+    tb(s, 0.8, 0.5, 11.7, 1.0, "OLD Cells and Organelles", 40, TITLE, True)
+    tb(s, 0.8, 1.8, 11.7, 3.8, ["OLD Cells are the basic unit of life", "OLD Organelles do jobs"], 26, BODY, font="Calibri", bullets=True)
+    tb(s, 0.8, 5.9, 3.0, 0.6, "OLD Starter: 5 min", 18, TITLE, font="Calibri")
+    tb(s, 9.3, 5.9, 3.2, 0.6, "OLD Key word: nucleus", 18, TITLE, font="Calibri")
+    tb(s, 0.8, 6.8, 6.0, 0.4, FOOTER, 12, BODY, font="Calibri")
+
+    s = prs.slides.add_slide(blank); bg(s, BG)
+    tb(s, 0.8, 0.5, 11.7, 1.0, "OLD Grouped Body", 40, TITLE, True)
+    g = s.shapes.add_group_shape()
+    g.shapes.add_shape(1, Inches(0.6), Inches(1.7), Inches(12.1), Inches(4.2))
+    tb(g, 0.8, 1.8, 11.7, 3.8, ["OLD Grouped point one", "OLD Grouped point two"], 26, BODY, font="Calibri", bullets=True)
+    tb(s, 0.8, 6.8, 6.0, 0.4, FOOTER, 12, BODY, font="Calibri")
+
+    s = prs.slides.add_slide(blank); bg(s, BG)
+    tb(s, 0.8, 0.5, 11.7, 1.0, "OLD Compare the Cells", 40, TITLE, True)
+    tb(s, 0.8, 1.8, 5.6, 3.8, ["OLD Plant cells have walls", "OLD Animal cells do not"], 26, BODY, font="Calibri", bullets=True)
+    t = s.shapes.add_table(3, 2, Inches(7.0), Inches(1.8), Inches(5.5), Inches(2.4)).table
+    t.cell(0, 0).text, t.cell(0, 1).text = "OLD Plant", "OLD Animal"
+    callout = s.shapes.add_group_shape()
+    callout.shapes.add_shape(1, Inches(7.0), Inches(4.6), Inches(5.5), Inches(1.0))
+    tb(callout, 7.1, 4.7, 5.3, 0.8, "OLD Remember: walls are rigid", 18, BG, font="Calibri")
+    tb(s, 0.8, 6.8, 6.0, 0.4, FOOTER, 12, BODY, font="Calibri")
+
+    prs.save(OUT / "leftovers.pptx")
+
+
 if __name__ == "__main__":
     textbox_deck()
     placeholder_deck()
+    leftovers_deck()
     print("fixtures written to", OUT)

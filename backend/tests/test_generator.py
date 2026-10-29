@@ -5,6 +5,7 @@ from lxml import etree
 from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
@@ -157,3 +158,40 @@ def test_sections_ext_removed(tmp_path):
     build_deck(style, [SlideContent(page=1, kind="content", title="New", bullets=["x"])], {}, out)
     with zipfile.ZipFile(out) as z:
         assert b"sectionLst" not in z.read("ppt/presentation.xml")
+
+
+def _all_text(slide):
+    texts = []
+
+    def walk(shapes):
+        for sh in shapes:
+            if sh.shape_type == MSO_SHAPE_TYPE.GROUP:
+                walk(sh.shapes)
+            if sh.has_text_frame:
+                texts.append(sh.text_frame.text)
+            if getattr(sh, "has_table", False):
+                texts.extend(c.text for row in sh.table.rows for c in row.cells)
+
+    walk(slide.shapes)
+    return "\n".join(texts)
+
+
+def test_no_sample_text_left_behind():
+    """Small labels, grouped text and tables on a sample slide are content, not style;
+    a footer repeated on every sample slide is style and stays."""
+    infos = analyze_presentation(Presentation(str(FIX / "leftovers.pptx")))
+    assert [i.kind for i in infos][1:] == ["content", "content"], [i.kind for i in infos]
+
+    contents = [
+        SlideContent(page=n, kind="content", title=f"New title {n}", bullets=[f"New point {n}a", f"New point {n}b"])
+        for n in range(1, 7)
+    ]
+    out = OUT / "leftovers.pptx"
+    build_deck(FIX / "leftovers.pptx", contents, {}, out)
+    result = Presentation(str(out))
+    assert len(result.slides) == 6
+    for n, slide in enumerate(result.slides, 1):
+        text = _all_text(slide)
+        assert "OLD" not in text, f"slide {n} kept sample text:\n{text}"
+        assert f"New title {n}" in text and f"New point {n}b" in text
+        assert "Oak Hill School" in text, f"slide {n} lost the repeated footer"

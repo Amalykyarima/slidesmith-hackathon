@@ -62,11 +62,24 @@ class SlideInfo:
 # --------------------------------------------------------------------------- #
 # Shape helpers
 # --------------------------------------------------------------------------- #
+def _walk(shapes, top=None):
+    """Every shape on a slide, inside groups too, paired with its top-level ancestor."""
+    for shp in shapes:
+        root = top if top is not None else shp
+        yield shp, root
+        if shp.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _walk(shp.shapes, root)
+
+
 def shape_by_id(slide: Slide, shape_id: int):
-    for shp in slide.shapes:
+    for shp, _ in _walk(slide.shapes):
         if shp.shape_id == shape_id:
             return shp
     return None
+
+
+def _norm_text(text: str) -> str:
+    return " ".join(text.split()).lower()
 
 
 def _ph_type(shape):
@@ -162,10 +175,17 @@ def resolve_pt(shape, slide: Slide, is_title: bool) -> float:
 # Slide analysis
 # --------------------------------------------------------------------------- #
 def analyze_slide(
-    slide: Slide, index: int, slide_w: int, slide_h: int, repeated: frozenset[str] = frozenset()
+    slide: Slide,
+    index: int,
+    slide_w: int,
+    slide_h: int,
+    repeated: frozenset[str] = frozenset(),
+    repeated_text: frozenset[str] = frozenset(),
 ) -> SlideInfo:
     slide_area = slide_w * slide_h
-    text_shapes = [s for s in slide.shapes if _is_text_candidate(s)]
+    walked = list(_walk(slide.shapes))
+    top_of = {s.shape_id: root for s, root in walked}
+    text_shapes = [s for s, _ in walked if _is_text_candidate(s)]
     # "Content" pictures are big but not decoration. Full-bleed backgrounds and anything
     # repeated across slides (logos, banners, corner art) are part of the style: keep them.
     big_pictures = [
@@ -175,12 +195,14 @@ def analyze_slide(
         and 0.10 * slide_area < _area(s) < 0.85 * slide_area
         and _image_hash(s) not in repeated
     ]
-    complex_ = any(
-        s.shape_type in (MSO_SHAPE_TYPE.TABLE, MSO_SHAPE_TYPE.CHART)
+    tables_and_charts = [
+        s
+        for s, _ in walked
+        if s.shape_type in (MSO_SHAPE_TYPE.TABLE, MSO_SHAPE_TYPE.CHART)
         or getattr(s, "has_table", False)
         or getattr(s, "has_chart", False)
-        for s in slide.shapes
-    )
+    ]
+    complex_ = bool(tables_and_charts)
 
     # --- title ---------------------------------------------------------- #
     title = next((s for s in text_shapes if _ph_type(s) in _TITLE_PLACEHOLDERS), None)
@@ -198,13 +220,23 @@ def analyze_slide(
     if body is None and body_candidates:
         body = sorted(body_candidates, key=lambda s: -_area(s))[0]
 
-    # Text boxes that carry sample content but aren't title/body: footers & labels
-    # are small and stay; big ones are stale sample content and get removed later.
-    stale = [
-        s.shape_id
-        for s in rest
-        if s is not body and _area(s) > 0.08 * slide_area and s.text_frame.text.strip()
-    ]
+    # Any other text is sample content and gets removed later, unless it is style:
+    # text repeated across sample slides (school name, running footer). Footer, date
+    # and slide-number placeholders never reach `rest`, so they always stay.
+    def is_style(s) -> bool:
+        return _norm_text(s.text_frame.text) in repeated_text
+
+    leftovers = [s for s in rest if s is not body and s.text_frame.text.strip() and not is_style(s)]
+    # A group holding only sample text (a callout and its box) goes as a whole;
+    # one that also holds the title, body or style text just loses that text.
+    keep_groups = {top_of[s.shape_id].shape_id for s in (title, body) if s is not None}
+    keep_groups |= {top_of[s.shape_id].shape_id for s in rest if s.text_frame.text.strip() and is_style(s)}
+    stale: list[int] = []
+    for s in [*leftovers, *tables_and_charts]:
+        root = top_of[s.shape_id]
+        sid = s.shape_id if root is s or root.shape_id in keep_groups else root.shape_id
+        if sid not in stale:
+            stale.append(sid)
 
     body_text = body.text_frame.text.strip() if body is not None else ""
     body_paragraphs = [p for p in (body.text_frame.paragraphs if body is not None else []) if p.text.strip()]
@@ -247,10 +279,19 @@ def _repeated_images(prs) -> frozenset[str]:
     return frozenset(h for h, n in seen.items() if n >= 2)
 
 
+def _repeated_texts(prs) -> frozenset[str]:
+    seen: Counter[str] = Counter()
+    for slide in prs.slides:
+        texts = {_norm_text(s.text_frame.text) for s, _ in _walk(slide.shapes) if s.has_text_frame}
+        seen.update(t for t in texts if t)
+    return frozenset(t for t, n in seen.items() if n >= 2)
+
+
 def analyze_presentation(prs) -> list[SlideInfo]:
     w, h = prs.slide_width, prs.slide_height
     repeated = _repeated_images(prs)
-    return [analyze_slide(s, i, w, h, repeated) for i, s in enumerate(prs.slides)]
+    repeated_text = _repeated_texts(prs)
+    return [analyze_slide(s, i, w, h, repeated, repeated_text) for i, s in enumerate(prs.slides)]
 
 
 # --------------------------------------------------------------------------- #
