@@ -94,6 +94,22 @@ export interface Draft {
   slides: SlideContent[];
 }
 
+export interface CookRequest {
+  style_id: string;
+  topic: string;
+  description: string;
+  /** null: the AI decides. */
+  slide_count: number | null;
+  image_ids: string[];
+}
+
+/** A whole deck the AI planned and wrote; nothing is built yet. */
+export interface Cooked {
+  mode: 'ai' | 'mock';
+  cover: SlideContent;
+  slides: (SlideContent & { image_id: string | null })[];
+}
+
 /** How a sample's text looks, so the live preview can imitate it. Null: not known. */
 export interface TextLook {
   size: number;

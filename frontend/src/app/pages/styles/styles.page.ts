@@ -1,6 +1,6 @@
 import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { firstValueFrom, interval } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { SlideStyle } from '../../core/models';
@@ -15,6 +15,7 @@ import { Lightbox } from '../../shared/lightbox';
 })
 export class StylesPage {
   private readonly api = inject(ApiService);
+  private readonly router = inject(Router);
 
   protected readonly styles = signal<SlideStyle[]>([]);
   protected readonly loading = signal(true);
@@ -73,6 +74,10 @@ export class StylesPage {
       try {
         const created = await firstValueFrom(this.api.uploadStyle(file));
         this.styles.update((list) => [created, ...list]);
+        if (files.length === 1) {
+          // One new template: go straight to cooking a lesson with it.
+          void this.router.navigate(['/create'], { queryParams: { style: created.id, cook: 1 } });
+        }
       } catch (err) {
         this.error.set(errorMessage(err));
       } finally {

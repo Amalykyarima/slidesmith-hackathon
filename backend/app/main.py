@@ -18,7 +18,7 @@ from . import ai, config, db
 from .generator import blank_layouts, build_deck
 from .previews import previews_available, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile
-from .schemas import BuildRequest, GenerateRequest, SlideContent
+from .schemas import BuildRequest, CookRequest, GenerateRequest, SlideContent
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidesmith")
@@ -309,9 +309,12 @@ def _image_paths(slides) -> dict[int, Path]:
     return image_paths
 
 
-def _write(req: GenerateRequest, image_paths: dict[int, Path], capacity: dict) -> tuple[list[SlideContent], str]:
+def _ask_ai(call, *args):
+    """Runs an AI call, turning its failures into messages a teacher can act on."""
     try:
-        return ai.generate_content(req, image_paths, capacity)
+        return call(*args)
+    except ai.AIError as exc:
+        raise HTTPException(502, str(exc))
     except anthropic.AuthenticationError:
         raise HTTPException(502, "The Anthropic API key was rejected. Check ANTHROPIC_API_KEY in backend/.env.")
     except anthropic.RateLimitError:
@@ -319,6 +322,10 @@ def _write(req: GenerateRequest, image_paths: dict[int, Path], capacity: dict) -
     except anthropic.APIError as exc:
         log.exception("Anthropic API error")
         raise HTTPException(502, f"The AI service returned an error: {getattr(exc, 'message', exc)}")
+
+
+def _write(req: GenerateRequest, image_paths: dict[int, Path], capacity: dict) -> tuple[list[SlideContent], str]:
+    return _ask_ai(ai.generate_content, req, image_paths, capacity)
 
 
 @app.post("/api/generate", status_code=201)
@@ -339,6 +346,26 @@ def draft(req: GenerateRequest):
     _, image_paths, capacity = _prepare(req)
     contents, mode = _write(req, image_paths, capacity)
     return {"mode": mode, "slides": [c.model_dump() for c in contents]}
+
+
+@app.post("/api/cook")
+def cook(req: CookRequest):
+    """The AI plans and writes a whole deck from a topic and description. Nothing is built yet."""
+    style = db.one("SELECT * FROM styles WHERE id=?", (req.style_id,))
+    if not style:
+        raise HTTPException(404, "That style no longer exists. Pick another one.")
+    if not req.topic.strip():
+        raise HTTPException(400, "Tell us the topic of the lesson.")
+    images: list[tuple[str, Path]] = []
+    for image_id in dict.fromkeys(req.image_ids):
+        row = db.one("SELECT * FROM images WHERE id=?", (image_id,))
+        if not row or not Path(row["path"]).exists():
+            raise HTTPException(400, "One of the pictures was not found. Please upload it again.")
+        images.append((image_id, Path(row["path"])))
+    prs = Presentation(style["path"])
+    capacity = content_capacity(prs, analyze_presentation(prs))
+    cover, slides, mode = _ask_ai(ai.cook, req, images, capacity)
+    return {"mode": mode, "cover": cover.model_dump(), "slides": [s.model_dump() for s in slides]}
 
 
 @app.post("/api/build", status_code=201)

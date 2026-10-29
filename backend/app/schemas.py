@@ -67,3 +67,19 @@ class BuildRequest(BaseModel):
     style_id: str
     title: str = Field(default="", max_length=200)
     slides: list[BuildSlide] = Field(min_length=1, max_length=41)
+
+
+class CookRequest(BaseModel):
+    """A topic and description: the AI plans and writes the whole deck."""
+
+    style_id: str
+    topic: str = Field(min_length=1, max_length=300)
+    description: str = Field(default="", max_length=4000)
+    # None: the AI decides (usually 6-10).
+    slide_count: int | None = Field(default=None, ge=3, le=20)
+    # Pictures the teacher attached; the AI decides which slide each goes on.
+    image_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
+class CookedSlide(SlideContent):
+    image_id: str | None = None

@@ -1,7 +1,7 @@
 import { Routes } from '@angular/router';
 
 export const routes: Routes = [
-  { path: '', pathMatch: 'full', redirectTo: 'styles' },
+  { path: '', pathMatch: 'full', redirectTo: 'create' },
   {
     path: 'styles',
     title: 'Styles · SlideSmith',

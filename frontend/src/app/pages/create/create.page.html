@@ -1,7 +1,24 @@
-<h1>Create today's slides</h1>
-<p class="lead">Fill in each slide below and watch it take shape. Apply builds the real slides in your style.</p>
+@switch (view()) {
+  @case ('start') {
+    <h1>Create today's slides</h1>
+    <p class="lead">Tell us the topic and let the AI cook a whole lesson in your template. You can change anything afterwards.</p>
+  }
+  @case ('review') {
+    <h1>Your slides are ready</h1>
+    <p class="lead">Download them as they are, or edit anything: text, formatting, pictures and layout.</p>
+  }
+  @default {
+    <h1>Edit your slides</h1>
+    <p class="lead">Each slide previews live as you type. Apply builds the real slides in your style.</p>
+  }
+}
+
+@if (error(); as message) {
+  <div class="alert alert-error" role="alert">{{ message }}</div>
+}
 
 <!-- ============ Template ============ -->
+@if (view() !== 'review') {
 <section class="card section template">
   @if (!stylesLoaded()) {
     <div class="picks" aria-busy="true" aria-label="Loading your styles">
@@ -11,8 +28,9 @@
     </div>
   } @else if (styles().length === 0) {
     <div class="empty">
-      You haven't added a style yet.
-      <p style="margin-top: 12px"><a class="btn btn-primary" routerLink="/styles">Upload sample slides</a></p>
+      <strong>Start with your school's PowerPoint template.</strong>
+      <p class="small" style="margin-top: 6px">Upload it once; every lesson the AI cooks will use its design.</p>
+      <p style="margin-top: 12px"><a class="btn btn-primary" routerLink="/styles">Upload your template</a></p>
     </div>
   } @else {
     <div class="template-head">
@@ -60,12 +78,107 @@
     }
   }
 </section>
+}
 
-@if (error(); as message) {
-  <div class="alert alert-error" role="alert">{{ message }}</div>
+<!-- ============ Let AI cook ============ -->
+@if (view() === 'start' && styles().length) {
+  <section class="card section cook">
+    <div class="cook-head">
+      <span class="cook-icon" aria-hidden="true">✨</span>
+      <div>
+        <h2>Let AI cook your lesson</h2>
+        <p class="muted small">It plans the slides, writes the text and places your pictures, all in your template.</p>
+      </div>
+    </div>
+    <div class="stack">
+      <label class="field">
+        Topic
+        <input class="input" [ngModel]="cookTopic()" (ngModelChange)="cookTopic.set($event)" maxlength="300" placeholder="e.g. Quadratic equations" />
+      </label>
+      <label class="field">
+        Description <span class="hint">(year group, what to cover, anything to include)</span>
+        <textarea class="input" rows="4" maxlength="4000" [ngModel]="cookDescription()" (ngModelChange)="cookDescription.set($event)"
+          placeholder="e.g. Year 10, higher tier. Solving by factorising and with the formula. Include a worked example and 3 practice questions."></textarea>
+      </label>
+      <div class="cook-row">
+        <label class="field count">
+          Slides
+          <select class="input" [ngModel]="cookCount()" (ngModelChange)="cookCount.set($event)">
+            <option [ngValue]="null">Let the AI decide</option>
+            @for (n of slideCounts; track n) {
+              <option [ngValue]="n">{{ n }} slides</option>
+            }
+          </select>
+        </label>
+        <div class="field pics">
+          <span>Pictures <span class="hint">(optional, the AI decides where they go)</span></span>
+          <div class="pic-row">
+            @for (img of cookImages(); track img.id) {
+              <span class="pic">
+                <img [src]="img.url" [alt]="img.filename" />
+                <button type="button" class="pic-x" [attr.aria-label]="'Remove ' + img.filename" (click)="removeCookImage(img.id)">✕</button>
+              </span>
+            }
+            @if (cookUploading()) {
+              <span class="pic skeleton" aria-label="Uploading"></span>
+            }
+            @if (cookImages().length < 10) {
+              <input #cookFiles type="file" accept="image/*" multiple hidden (change)="addCookImages($event)" />
+              <button type="button" class="btn btn-sm" (click)="cookFiles.click()">+ Add pictures</button>
+            }
+          </div>
+        </div>
+      </div>
+      <div class="cook-actions">
+        <button type="button" class="btn btn-primary btn-lg" [disabled]="!canCook()" (click)="cook()">✨ Cook my slides</button>
+        @if (!cookTopic().trim()) {
+          <span class="muted small">Add a topic to start.</span>
+        }
+        <span class="grow"></span>
+        <button type="button" class="btn btn-quiet" (click)="editSlides()">Or write it slide by slide →</button>
+      </div>
+    </div>
+  </section>
+}
+
+<!-- ============ Review ============ -->
+@if (view() === 'review' && result(); as r) {
+  <section class="card section review">
+    <div class="review-head">
+      <div>
+        <h2>{{ r.title }}</h2>
+        <p class="muted small">
+          {{ r.previews.length || r.slides.length }} slides
+          @if (cookTopic()) {
+            · cooked from “{{ cookTopic() }}”
+          }
+        </p>
+      </div>
+      <div class="row wrap">
+        <button type="button" class="btn" (click)="newDeck()">Start something new</button>
+        <button type="button" class="btn" (click)="editSlides()">✏️ Edit slides</button>
+        <a class="btn btn-primary" [href]="r.download_url" download>Download .pptx</a>
+      </div>
+    </div>
+    @if (r.previews.length) {
+      <div class="gallery">
+        @for (src of r.previews; track src; let i = $index) {
+          <figure>
+            <button type="button" class="shot" (click)="viewing.set(i)" [attr.aria-label]="'View ' + previewCaptions(r)[i] + ' full size'">
+              <img [src]="src" [alt]="previewCaptions(r)[i]" loading="lazy" />
+            </button>
+            <figcaption class="small muted">{{ previewCaptions(r)[i] }}</figcaption>
+          </figure>
+        }
+      </div>
+    } @else {
+      <p class="muted">Previews need LibreOffice on the server; the download works without it.</p>
+    }
+  </section>
 }
 
 <!-- ============ Slides ============ -->
+@if (view() === 'edit') {
 <section class="slides" aria-label="Slides">
   <div class="slides-head">
     <h2>What goes on each slide</h2>
@@ -153,6 +266,7 @@
     </div>
   </details>
 </section>
+}
 
 @if (result(); as r) {
   @if (r.warnings.length) {
@@ -171,6 +285,7 @@
 }
 
 <!-- ============ Actions ============ -->
+@if (view() === 'edit') {
 <div class="action-bar">
   <div class="status" role="status">
     @if (blocker(); as why) {
@@ -188,6 +303,7 @@
   <div class="actions">
     @if (result()) {
       <button type="button" class="btn btn-sm btn-quiet" (click)="newDeck()">Start over</button>
+      <button type="button" class="btn btn-sm" [disabled]="dirty()" (click)="view.set('review')" [title]="dirty() ? 'Apply your changes first' : ''">View slides</button>
     }
     <button type="button" class="btn" [disabled]="!canWrite()" (click)="writeWithAi()" [title]="health()?.ai_enabled ? 'Turns your notes into slide text, then builds' : 'Demo mode: splits your notes into a title and bullet points, then builds'">
       ✨ Write with AI
@@ -200,6 +316,7 @@
     }
   </div>
 </div>
+}
 
 @if (busyMessage(); as b) {
   <app-busy-overlay [message]="b.message" [detail]="b.detail" />

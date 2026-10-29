@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { BuildRequest, Draft, GenerateRequest, Generation, Health, SlideStyle, StyleLayouts, UploadedImage } from './models';
+import { BuildRequest, CookRequest, Cooked, Draft, GenerateRequest, Generation, Health, SlideStyle, StyleLayouts, UploadedImage } from './models';
 
 /** All backend calls live here. Paths are relative; `proxy.conf.json` forwards them to FastAPI in dev. */
 @Injectable({ providedIn: 'root' })
@@ -53,6 +53,11 @@ export class ApiService {
   /** The AI writes slide text from rough notes. Nothing is built. */
   draft(request: GenerateRequest): Observable<Draft> {
     return this.http.post<Draft>('/api/draft', request);
+  }
+
+  /** The AI plans and writes a whole deck from a topic and description. Nothing is built. */
+  cook(request: CookRequest): Observable<Cooked> {
+    return this.http.post<Cooked>('/api/cook', request);
   }
 
   /** Builds the slides exactly as edited, in the style, without the AI. */

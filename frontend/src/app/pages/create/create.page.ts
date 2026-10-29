@@ -51,15 +51,25 @@ export class CreatePage {
   protected readonly cover = signal(true);
   protected readonly coverSlide = signal<EditSlide>(blankSlide(COVER_KEY, 'title'));
   protected readonly slides = signal<EditSlide[]>([blankSlide(this.nextKey++)]);
+  /** start: template + "let AI cook"; review: the built deck; edit: the slide cards. */
+  protected readonly view = signal<'start' | 'review' | 'edit'>('start');
+  protected readonly cookTopic = signal('');
+  protected readonly cookDescription = signal('');
+  protected readonly cookCount = signal<number | null>(null);
+  protected readonly cookImages = signal<UploadedImage[]>([]);
+  protected readonly cookUploading = signal(0);
+  protected readonly slideCounts = [5, 6, 8, 10, 12, 15];
   protected readonly topic = signal('');
   protected readonly instructions = signal('');
   /** Upload state per card key. */
   protected readonly uploads = signal<Record<number, { uploading: boolean; error: string | null }>>({});
 
   /** What's running; the page is covered by the loader meanwhile. */
-  protected readonly busy = signal<'ai' | 'build' | 'render' | null>(null);
+  protected readonly busy = signal<'cook' | 'ai' | 'build' | 'render' | null>(null);
   protected readonly busyMessage = computed(() => {
     switch (this.busy()) {
+      case 'cook':
+        return { message: 'Cooking your lesson…', detail: 'The AI is planning and writing every slide.' };
       case 'ai':
         return { message: 'Writing your slides…', detail: 'The AI is turning your notes into slide text.' };
       case 'build':
@@ -112,6 +122,7 @@ export class CreatePage {
     return null;
   });
   protected readonly canApply = computed(() => !this.blocker() && !this.busy() && this.dirty());
+  protected readonly canCook = computed(() => !!this.styleId() && !!this.cookTopic().trim() && !this.busy() && !this.cookUploading());
   protected readonly canWrite = computed(() => !this.blocker() && !this.busy() && this.slides().some((s) => notesOf(s)));
 
   constructor() {
@@ -134,6 +145,7 @@ export class CreatePage {
         slides: this.slides(),
         topic: this.topic(),
         instructions: this.instructions(),
+        cook: { topic: this.cookTopic(), description: this.cookDescription(), count: this.cookCount(), images: this.cookImages() },
       };
       try {
         localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -162,6 +174,12 @@ export class CreatePage {
         }
         this.topic.set(d.topic ?? '');
         this.instructions.set(d.instructions ?? '');
+        this.cookTopic.set(d.cook?.topic ?? '');
+        this.cookDescription.set(d.cook?.description ?? '');
+        this.cookCount.set(d.cook?.count ?? null);
+        this.cookImages.set(d.cook?.images ?? []);
+        // Coming back to a deck in progress: straight to its slides.
+        if (this.slides().some((s) => !isEmpty(s))) this.view.set('edit');
         return;
       }
       // Drafts from before the editor: plain notes per slide.
@@ -195,6 +213,7 @@ export class CreatePage {
       const current = this.styleId();
       const valid = (id: string | null) => !!id && list.some((s) => s.id === id);
       if (valid(fromLink)) this.styleId.set(fromLink);
+      if (valid(fromLink) && this.route.snapshot.queryParamMap.get('cook')) this.view.set('start');
       else if (!valid(current)) this.styleId.set(list[0]?.id ?? null);
     } catch (err) {
       this.error.set(errorMessage(err));
@@ -299,6 +318,74 @@ export class CreatePage {
   protected labelOf(s: EditSlide): string {
     const at = this.deck().find((d) => d.slide.key === s.key);
     return at ? `Slide ${at.page}` : 'Slide (empty)';
+  }
+
+  // ------------------------------------------------------------------- cook
+  protected async addCookImages(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []).filter((f) => f.type.startsWith('image/'));
+    input.value = '';
+    for (const file of files.slice(0, 10 - this.cookImages().length)) {
+      this.cookUploading.update((n) => n + 1);
+      try {
+        const image = await firstValueFrom(this.api.uploadImage(file));
+        this.cookImages.update((list) => [...list, image]);
+      } catch (err) {
+        this.error.set(errorMessage(err));
+      } finally {
+        this.cookUploading.update((n) => n - 1);
+      }
+    }
+  }
+
+  protected removeCookImage(id: string): void {
+    this.cookImages.update((list) => list.filter((i) => i.id !== id));
+  }
+
+  /** The AI plans and writes the whole deck, which is then built and shown. */
+  protected async cook(): Promise<void> {
+    const styleId = this.styleId();
+    if (!styleId || !this.canCook()) return;
+    const images = new Map(this.cookImages().map((i) => [i.id, i]));
+    this.error.set(null);
+    this.busy.set('cook');
+    try {
+      const deck = await firstValueFrom(
+        this.api.cook({
+          style_id: styleId,
+          topic: this.cookTopic().trim(),
+          description: this.cookDescription().trim(),
+          slide_count: this.cookCount(),
+          image_ids: [...images.keys()],
+        }),
+      );
+      clearTimeout(this.pollTimer);
+      this.result.set(null);
+      this.built.set(null);
+      this.uploads.set({});
+      this.cover.set(true);
+      this.coverSlide.set({
+        ...blankSlide(COVER_KEY, 'title'),
+        title: [{ text: deck.cover.title }],
+        body: deck.cover.subtitle ? [[{ text: deck.cover.subtitle }]] : [],
+      });
+      this.slides.set(
+        deck.slides.map((c) => ({ ...fromContent(blankSlide(this.nextKey++), c, true), image: (c.image_id && images.get(c.image_id)) || null })),
+      );
+      this.topic.set(this.cookTopic().trim());
+    } catch (err) {
+      this.error.set(errorMessage(err));
+      this.busy.set(null);
+      return;
+    }
+    await this.build(styleId);
+    this.view.set(this.result() ? 'review' : 'edit');
+    window.scrollTo({ top: 0 });
+  }
+
+  protected editSlides(): void {
+    this.view.set('edit');
+    window.scrollTo({ top: 0 });
   }
 
   // ------------------------------------------------------------------ build
@@ -421,6 +508,7 @@ export class CreatePage {
     this.uploads.set({});
     this.topic.set('');
     this.instructions.set('');
+    this.view.set('start');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 

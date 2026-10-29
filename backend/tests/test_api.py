@@ -178,3 +178,28 @@ def test_blank_layouts_describe_where_text_goes():
         again = c.get(f"/api/styles/{style['id']}/layouts").json()
         assert again["layouts"][1]["title"] == content["title"], "cached"
         assert c.get("/api/styles/nope/layouts").status_code == 404
+
+
+def test_cook_plans_a_whole_lesson_and_places_the_pictures():
+    with TestClient(app) as c:
+        style = c.post("/api/styles", files={"file": ("biology_dark.pptx", (FIX / "biology_dark.pptx").read_bytes())}).json()
+        pics = [c.post("/api/images", files={"file": (f"p{n}.png", (FIX / "sample_diagram.png").read_bytes())}).json()["id"] for n in range(2)]
+        r = c.post("/api/cook", json={
+            "style_id": style["id"], "topic": "Photosynthesis",
+            "description": "Year 9. Plants make glucose from light. Chlorophyll absorbs light. Oxygen is released.",
+            "image_ids": pics,
+        })
+        assert r.status_code == 200, r.text
+        deck = r.json()
+        assert deck["mode"] == "mock" and deck["cover"]["title"] == "Photosynthesis"
+        slides = deck["slides"]
+        assert [s["page"] for s in slides] == list(range(1, len(slides) + 1))
+        assert sorted(s["image_id"] for s in slides if s["image_id"]) == sorted(pics), "every picture used once"
+        assert "Plants make glucose from light" in str(slides), "the description is used"
+
+        sized = c.post("/api/cook", json={"style_id": style["id"], "topic": "Cells", "slide_count": 5}).json()
+        assert len(sized["slides"]) == 5
+
+        assert c.post("/api/cook", json={"style_id": style["id"], "topic": ""}).status_code == 422
+        assert c.post("/api/cook", json={"style_id": style["id"], "topic": "x", "image_ids": ["gone"]}).status_code == 400
+        assert c.post("/api/cook", json={"style_id": "nope", "topic": "x"}).status_code == 404
