@@ -411,7 +411,11 @@ def pick_exemplar(infos: list[SlideInfo], kind: str, usage: Counter) -> SlideInf
         simple = [i for i in pool if not i.complex]
         pool = simple or pool
         if pool:
-            return sorted(pool, key=lambda i: (usage[i.index], i.index))[0]
+            # Rotate for variety, but only among the cleanest samples: a busy one
+            # leaves empty cards and bars behind once its sample text is removed.
+            calm = min(i.clutter for i in pool)
+            pool = [i for i in pool if i.clutter <= calm + 0.05]
+            return sorted(pool, key=lambda i: (usage[i.index], i.clutter, i.index))[0]
     return infos[0]
 
 
