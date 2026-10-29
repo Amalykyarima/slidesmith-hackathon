@@ -4,6 +4,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { BuildRequest, GenerateRequest, Generation, Health, Layout, SlideStyle, StyleLayouts, UploadedImage } from '../../core/models';
+import { BusyOverlay } from '../../shared/busy-overlay';
 import { Lightbox } from '../../shared/lightbox';
 import { COVER_KEY, EditSlide, blankSlide, fromContent, isEmpty, layoutKind, notesOf, plain, signature, toBuildSlide } from './deck';
 import { BuiltState, SlideCard } from './slide-card';
@@ -25,7 +26,7 @@ interface Built {
 
 @Component({
   selector: 'app-create-page',
-  imports: [FormsModule, RouterLink, Lightbox, SlideCard, SlidePreview],
+  imports: [FormsModule, RouterLink, BusyOverlay, Lightbox, SlideCard, SlidePreview],
   templateUrl: './create.page.html',
   styleUrl: './create.page.css',
 })
@@ -55,7 +56,20 @@ export class CreatePage {
   /** Upload state per card key. */
   protected readonly uploads = signal<Record<number, { uploading: boolean; error: string | null }>>({});
 
-  protected readonly busy = signal<'ai' | 'build' | null>(null);
+  /** What's running; the page is covered by the loader meanwhile. */
+  protected readonly busy = signal<'ai' | 'build' | 'render' | null>(null);
+  protected readonly busyMessage = computed(() => {
+    switch (this.busy()) {
+      case 'ai':
+        return { message: 'Writing your slides…', detail: 'The AI is turning your notes into slide text.' };
+      case 'build':
+        return { message: 'Building your slides…', detail: 'Putting your text into your own template.' };
+      case 'render':
+        return { message: 'Almost there…', detail: 'Drawing the finished slides.' };
+      default:
+        return null;
+    }
+  });
   protected readonly error = signal<string | null>(null);
   protected readonly result = signal<Generation | null>(null);
   protected readonly built = signal<Built | null>(null);
@@ -318,14 +332,17 @@ export class CreatePage {
       this.busy.set(null);
       return;
     }
-    this.busy.set(null);
-    await this.apply();
+    if (this.blocker()) this.busy.set(null);
+    else await this.build(styleId); // straight on, under the same loader
   }
 
   /** Builds the slides exactly as shown and renders the real previews. */
   protected async apply(): Promise<void> {
     const styleId = this.styleId();
-    if (!styleId || !this.canApply()) return;
+    if (styleId && this.canApply()) await this.build(styleId);
+  }
+
+  private async build(styleId: string): Promise<void> {
     const deck = this.deck();
     const request: BuildRequest = {
       style_id: styleId,
@@ -346,7 +363,8 @@ export class CreatePage {
       const generation = await firstValueFrom(this.api.build(request));
       this.result.set(generation);
       this.built.set(snapshot);
-      this.pollPreviews(generation.id, 0);
+      this.busy.set('render');
+      await this.waitForPreviews(generation.id);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
@@ -354,18 +372,19 @@ export class CreatePage {
     }
   }
 
-  private pollPreviews(id: string, attempt: number): void {
-    const current = this.result();
-    if (!current || current.id !== id || current.preview_status !== 'pending' || attempt > 60) return;
-    this.pollTimer = setTimeout(async () => {
+  /** Waits (up to ~90s) for the built slides to render, keeping the result fresh. */
+  private async waitForPreviews(id: string): Promise<void> {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const current = this.result();
+      if (!current || current.id !== id || current.preview_status !== 'pending') return;
+      await new Promise((resolve) => (this.pollTimer = setTimeout(resolve, 1500)));
       try {
         const fresh = await firstValueFrom(this.api.getGeneration(id));
         if (this.result()?.id === id) this.result.set(fresh);
       } catch {
         /* keep trying quietly */
       }
-      this.pollPreviews(id, attempt + 1);
-    }, 1500);
+    }
   }
 
   /** What a card's preview shows: the built slide while it matches, else the live drawing. */

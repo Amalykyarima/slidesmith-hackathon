@@ -27,8 +27,8 @@
   <span class="muted small">.pptx only · tip: include a title slide, a bullet slide and a slide with a picture</span>
 </div>
 
-@for (name of uploading(); track $index) {
-  <div class="uploading card"><span class="spinner"></span> Reading <strong>{{ name }}</strong>…</div>
+@if (uploading().length) {
+  <app-busy-overlay message="Reading your template…" [detail]="uploading()[0]" />
 }
 
 @if (loading()) {

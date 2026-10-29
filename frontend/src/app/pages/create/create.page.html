@@ -171,21 +171,16 @@
 }
 
 <!-- ============ Actions ============ -->
-<div class="action-bar" [class.busy]="busy()">
-  <div class="progress" aria-hidden="true"></div>
-  <div class="status" role="status" aria-live="polite">
-    @if (busy() === 'ai') {
-      <span class="spinner"></span> The AI is writing your slides…
-    } @else if (busy() === 'build') {
-      <span class="spinner"></span> Building your slides…
-    } @else if (blocker(); as why) {
+<div class="action-bar">
+  <div class="status" role="status">
+    @if (blocker(); as why) {
       <span class="muted">{{ why }}</span>
     } @else if (!result()) {
       <span class="muted">{{ deck().length }} {{ deck().length === 1 ? 'slide' : 'slides' }} ready to build.</span>
     } @else if (dirty()) {
       <span class="dot dot-warn"></span> Changes not applied yet.
     } @else if (result()!.preview_status === 'pending') {
-      <span class="spinner"></span> Up to date · rendering previews…
+      <span class="spinner"></span> Up to date · still drawing previews…
     } @else {
       <span class="dot dot-ok"></span> Up to date.
     }
@@ -198,14 +193,14 @@
       ✨ Write with AI
     </button>
     <button type="button" class="btn btn-primary" [disabled]="!canApply()" (click)="apply()">
-      @if (busy() === 'build') {
-        <span class="spinner"></span> Applying…
-      } @else {
-        {{ result() ? 'Apply changes' : 'Build slides' }}
-      }
+      {{ result() ? 'Apply changes' : 'Build slides' }}
     </button>
     @if (result(); as r) {
       <a class="btn btn-primary" [class.btn-outline]="dirty()" [href]="r.download_url" download [title]="dirty() ? 'Downloads the last applied version' : ''">Download .pptx</a>
     }
   </div>
 </div>
+
+@if (busyMessage(); as b) {
+  <app-busy-overlay [message]="b.message" [detail]="b.detail" />
+}

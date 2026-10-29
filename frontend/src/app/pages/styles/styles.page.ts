@@ -4,11 +4,12 @@ import { RouterLink } from '@angular/router';
 import { firstValueFrom, interval } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { SlideStyle } from '../../core/models';
+import { BusyOverlay } from '../../shared/busy-overlay';
 import { Lightbox } from '../../shared/lightbox';
 
 @Component({
   selector: 'app-styles-page',
-  imports: [RouterLink, Lightbox],
+  imports: [RouterLink, BusyOverlay, Lightbox],
   templateUrl: './styles.page.html',
   styleUrl: './styles.page.css',
 })
