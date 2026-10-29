@@ -234,3 +234,12 @@ def test_image_positions(tmp_path):
     assert not any(s.has_text_frame and "Label the parts" in s.text_frame.text for s in large.shapes)
     assert any("speaker notes" in w for w in warnings)
     assert _pic_boxes(none) == [], "no picture, and the sample's own picture is gone too"
+
+
+def test_very_long_line_still_builds(tmp_path):
+    """A paragraph of notes with no sentence breaks becomes one long bullet: warn, don't crash."""
+    out = tmp_path / "long.pptx"
+    warnings = build_deck(FIX / "biology_dark.pptx", [SlideContent(page=1, title="Long", bullets=["word " * 600])], {}, out)
+    assert any("overflow" in w for w in warnings)
+    slide = Presentation(str(out)).slides[0]
+    assert any("word word" in sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)

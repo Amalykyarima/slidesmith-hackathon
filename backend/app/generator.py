@@ -262,8 +262,9 @@ def fill_text(
     anchor: str = "auto",
 ) -> None:
     """Fills a shape with plain lines or formatted paragraphs (lists of runs), one per line."""
-    blocks = [[TextRun(text=ln)] if isinstance(ln, str) else [r for r in ln if r.text] for ln in lines]
-    blocks = [runs for runs in blocks if "".join(r.text for r in runs).strip()] or [[TextRun(text="")]]
+    # model_construct: plain lines are internal, so they skip the edit-size limits on TextRun.
+    blocks = [[TextRun.model_construct(text=ln)] if isinstance(ln, str) else [r for r in ln if r.text] for ln in lines]
+    blocks = [runs for runs in blocks if "".join(r.text for r in runs).strip()] or [[TextRun.model_construct(text="")]]
     for runs in blocks:  # trim the paragraph's ends, like plain lines are trimmed
         runs[0] = runs[0].model_copy(update={"text": runs[0].text.lstrip()})
         runs[-1] = runs[-1].model_copy(update={"text": runs[-1].text.rstrip()})

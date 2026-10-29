@@ -130,16 +130,19 @@ def test_rebuild_applies_edits_without_ai():
         }).json()
 
         slides = gen["slides"]
+        slides[0]["title"] = "Cells and Photosynthesis"
+        slides[0]["title_runs"] = [{"text": "Cells and Photosynthesis"}]
         slides[1]["title_runs"] = [{"text": "Parts of a "}, {"text": "cell", "bold": True, "color": "#00B050"}]
         slides[2]["image_position"] = "left"
         r = c.post(f"/api/generations/{gen['id']}/rebuild", json={"slides": slides})
         assert r.status_code == 201, r.text
         new = r.json()
-        assert new["id"] != gen["id"] and new["mode"] == gen["mode"] and new["title"] == "Cells"
+        assert new["id"] != gen["id"] and new["mode"] == gen["mode"]
+        assert new["title"] == "Cells and Photosynthesis", "the edited cover renames the deck"
         assert new["slides"][1]["title_runs"][1]["bold"] is True
 
         prs = Presentation(str(Path(os.environ["STORAGE_DIR"]) / "outputs" / f"{new['id']}.pptx"))
-        assert len(prs.slides) == 3
+        assert len(prs.slides) == 3 and prs.core_properties.title == "Cells and Photosynthesis"
         title_run = next(r for sh in prs.slides[1].shapes if sh.has_text_frame
                          for p in sh.text_frame.paragraphs for r in p.runs if r.text == "cell")
         assert title_run.font.bold and str(title_run.font.color.rgb) == "00B050"
