@@ -245,11 +245,17 @@
       <div class="previews">
         @for (src of r.previews; track src; let i = $index) {
           <figure>
-            <img [src]="src" [alt]="'Slide ' + (i + 1) + ' preview'" loading="lazy" />
-            <figcaption class="small muted">{{ r.slides[i]?.page ? 'Page ' + r.slides[i].page : '' }}</figcaption>
+            <button type="button" class="preview-btn" (click)="viewing.set(i)" [attr.aria-label]="'View slide ' + (i + 1) + ' full size'">
+              <img [src]="src" [alt]="'Slide ' + (i + 1) + ' preview'" loading="lazy" />
+            </button>
+            <figcaption class="small muted">{{ previewCaptions(r)[i] }}</figcaption>
           </figure>
         }
       </div>
+      <p class="small muted">Click a slide to see it bigger.</p>
+      @if (viewing() !== null) {
+        <app-lightbox [images]="r.previews" [captions]="previewCaptions(r)" [start]="viewing()!" (closed)="viewing.set(null)" />
+      }
     } @else if (r.preview_status === 'pending') {
       <p class="muted small"><span class="spinner"></span> Rendering previews… you can already download the file.</p>
     } @else if (r.preview_status === 'unavailable') {

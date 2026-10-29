@@ -4,10 +4,11 @@ import { RouterLink } from '@angular/router';
 import { firstValueFrom, interval } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { SlideStyle } from '../../core/models';
+import { Lightbox } from '../../shared/lightbox';
 
 @Component({
   selector: 'app-styles-page',
-  imports: [RouterLink],
+  imports: [RouterLink, Lightbox],
   templateUrl: './styles.page.html',
   styleUrl: './styles.page.css',
 })
@@ -20,6 +21,8 @@ export class StylesPage {
   protected readonly error = signal<string | null>(null);
   protected readonly dragOver = signal(false);
   protected readonly editingId = signal<string | null>(null);
+  /** Style whose sample slides are open full-size, or null. */
+  protected readonly viewing = signal<SlideStyle | null>(null);
 
   constructor() {
     void this.refresh();
@@ -115,5 +118,9 @@ export class StylesPage {
 
   protected hex(color: string): string {
     return `#${color.replace('#', '')}`;
+  }
+
+  protected sampleCaptions(style: SlideStyle): string[] {
+    return style.previews.map((_, i) => `${style.name} · sample ${i + 1}`);
   }
 }
