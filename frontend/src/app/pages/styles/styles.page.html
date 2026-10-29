@@ -43,7 +43,12 @@
       <article class="style card">
         <div class="thumb" [style.aspect-ratio]="ratio(style)" [style.background]="gradient(style)">
           @if (style.previews.length) {
-            <img [src]="style.previews[0]" [alt]="'First slide of ' + style.name" loading="lazy" />
+            <button type="button" class="thumb-btn" (click)="viewing.set(style)" [attr.aria-label]="'View the ' + style.previews.length + ' sample slides of ' + style.name">
+              <img [src]="style.previews[0]" [alt]="'First slide of ' + style.name" loading="lazy" />
+              @if (style.previews.length > 1) {
+                <span class="thumb-count">{{ style.previews.length }} slides</span>
+              }
+            </button>
           } @else if (style.preview_status === 'pending') {
             <span class="thumb-note"><span class="spinner"></span> Preparing preview…</span>
           } @else {
@@ -102,4 +107,8 @@
       </article>
     }
   </div>
+}
+
+@if (viewing(); as v) {
+  <app-lightbox [images]="v.previews" [captions]="sampleCaptions(v)" (closed)="viewing.set(null)" />
 }

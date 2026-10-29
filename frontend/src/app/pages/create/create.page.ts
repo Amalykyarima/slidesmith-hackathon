@@ -4,6 +4,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { GenerateRequest, Generation, SlideStyle, UploadedImage } from '../../core/models';
+import { Lightbox } from '../../shared/lightbox';
 
 interface Row {
   key: number;
@@ -18,7 +19,7 @@ const DRAFT_KEY = 'slidesmith.draft.v1';
 
 @Component({
   selector: 'app-create-page',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, Lightbox],
   templateUrl: './create.page.html',
   styleUrl: './create.page.css',
 })
@@ -41,6 +42,8 @@ export class CreatePage {
   protected readonly generating = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly result = signal<Generation | null>(null);
+  /** Index of the result preview open full-size, or null. */
+  protected readonly viewing = signal<number | null>(null);
 
   protected readonly pageProblem = computed(() => {
     const pages = this.rows().map((r) => r.page);
@@ -215,7 +218,17 @@ export class CreatePage {
     }, 2000);
   }
 
+  /** Caption per preview: "Cover" or "Slide n · title". */
+  protected previewCaptions(r: Generation): string[] {
+    return r.previews.map((_, i) => {
+      const s = r.slides[i];
+      if (!s) return `Slide ${i + 1}`;
+      return s.page === 0 ? `Cover · ${s.title}` : `Slide ${s.page}${s.title ? ' · ' + s.title : ''}`;
+    });
+  }
+
   protected newDeck(): void {
+    this.viewing.set(null);
     this.result.set(null);
     this.title.set('');
     this.topic.set('');
