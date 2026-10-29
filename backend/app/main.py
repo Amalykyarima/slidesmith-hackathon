@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import shutil
@@ -14,10 +15,10 @@ from PIL import Image, ImageOps
 from pptx import Presentation
 
 from . import ai, config, db
-from .generator import build_deck
+from .generator import blank_layouts, build_deck
 from .previews import previews_available, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile
-from .schemas import GenerateRequest, RebuildRequest, SlideContent
+from .schemas import BuildRequest, GenerateRequest, SlideContent
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidesmith")
@@ -172,7 +173,60 @@ def delete_style(style_id: str):
         raise HTTPException(404, "Style not found")
     Path(row["path"]).unlink(missing_ok=True)
     shutil.rmtree(config.PREVIEWS_DIR / "styles" / style_id, ignore_errors=True)
+    shutil.rmtree(_layouts_dir(style_id), ignore_errors=True)
     db.run("DELETE FROM styles WHERE id=?", (style_id,))
+
+
+# Bump when the layout description changes, so cached ones are made again.
+LAYOUTS_VERSION = 1
+
+
+def _layouts_dir(style_id: str) -> Path:
+    return config.PREVIEWS_DIR / "layouts" / style_id
+
+
+def _render_layouts(style_id: str) -> None:
+    folder = _layouts_dir(style_id)
+    meta = json.loads((folder / "layouts.json").read_text())
+    try:
+        count = render_previews(folder / "blank.pptx", folder, width_px=1280)
+        meta.update(status="ready" if count else "unavailable", count=count)
+    except Exception:  # noqa: BLE001
+        log.exception("Rendering the blank template failed for style %s", style_id)
+        meta["status"] = "failed"
+    (folder / "layouts.json").write_text(json.dumps(meta))
+
+
+@app.get("/api/styles/{style_id}/layouts")
+def style_layouts(style_id: str, background: BackgroundTasks):
+    """The style's blank slides (cover, content, picture, section) and where their text and picture go."""
+    row = db.one("SELECT * FROM styles WHERE id=?", (style_id,))
+    if not row:
+        raise HTTPException(404, "Style not found")
+    folder = _layouts_dir(style_id)
+    meta_path = folder / "layouts.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else None
+    if not meta or meta.get("version") != LAYOUTS_VERSION:
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            layouts = blank_layouts(Path(row["path"]), folder / "blank.pptx")
+        except Exception:  # noqa: BLE001
+            log.exception("Could not make the blank template for style %s", style_id)
+            raise HTTPException(500, "We couldn't read the slide layouts in this style.")
+        meta = {"version": LAYOUTS_VERSION, "status": "pending" if previews_available() else "unavailable", "count": 0, "layouts": layouts}
+        meta_path.write_text(json.dumps(meta))
+        if previews_available():
+            background.add_task(_render_layouts, style_id)
+    profile = db.loads(row["profile"], {})
+    return {
+        "status": meta["status"],
+        "slide_size_in": profile.get("slide_size_in", [13.33, 7.5]),
+        "background_tone": profile.get("background_tone", "light"),
+        "layouts": [
+            {**layout, "image": f"/files/previews/layouts/{style_id}/{n}.jpg?v={LAYOUTS_VERSION}" if n <= meta["count"] else None}
+            for n, layout in enumerate(meta["layouts"], start=1)
+        ],
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -225,8 +279,8 @@ def delete_image(image_id: str):
 # --------------------------------------------------------------------------- #
 # Generation
 # --------------------------------------------------------------------------- #
-@app.post("/api/generate", status_code=201)
-def generate(req: GenerateRequest, background: BackgroundTasks):
+def _prepare(req: GenerateRequest) -> tuple[Path, dict[int, Path], dict]:
+    """Checks a notes request; returns the style file, attached pictures and the style's text capacity."""
     style = db.one("SELECT * FROM styles WHERE id=?", (req.style_id,))
     if not style:
         raise HTTPException(404, "That style no longer exists. Pick another one.")
@@ -236,23 +290,28 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
         raise HTTPException(400, "Each slide needs a different page number.")
     if len(pages) > config.MAX_SLIDES_PER_REQUEST:
         raise HTTPException(400, f"Please keep it to {config.MAX_SLIDES_PER_REQUEST} slides per request.")
-    if req.cover and not req.title.strip():
-        raise HTTPException(400, "Give the cover slide a title.")
 
-    image_paths: dict[int, Path] = {}
-    for spec in req.slides:
-        if spec.image_id:
-            row = db.one("SELECT * FROM images WHERE id=?", (spec.image_id,))
-            if not row:
-                raise HTTPException(400, f"The image for page {spec.page} was not found. Please upload it again.")
-            image_paths[spec.page] = Path(row["path"])
-
+    image_paths = _image_paths(req.slides)
     style_path = Path(style["path"])
     prs = Presentation(str(style_path))
-    capacity = content_capacity(prs, analyze_presentation(prs))
+    return style_path, image_paths, content_capacity(prs, analyze_presentation(prs))
 
+
+def _image_paths(slides) -> dict[int, Path]:
+    image_paths: dict[int, Path] = {}
+    for spec in slides:
+        if spec.image_id:
+            row = db.one("SELECT * FROM images WHERE id=?", (spec.image_id,))
+            if not row or not Path(row["path"]).exists():
+                label = "the cover" if spec.page == 0 else f"slide {spec.page}"
+                raise HTTPException(400, f"The picture for {label} was not found. Please upload it again.")
+            image_paths[spec.page] = Path(row["path"])
+    return image_paths
+
+
+def _write(req: GenerateRequest, image_paths: dict[int, Path], capacity: dict) -> tuple[list[SlideContent], str]:
     try:
-        contents, mode = ai.generate_content(req, image_paths, capacity)
+        return ai.generate_content(req, image_paths, capacity)
     except anthropic.AuthenticationError:
         raise HTTPException(502, "The Anthropic API key was rejected. Check ANTHROPIC_API_KEY in backend/.env.")
     except anthropic.RateLimitError:
@@ -260,15 +319,48 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     except anthropic.APIError as exc:
         log.exception("Anthropic API error")
         raise HTTPException(502, f"The AI service returned an error: {getattr(exc, 'message', exc)}")
+
+
+@app.post("/api/generate", status_code=201)
+def generate(req: GenerateRequest, background: BackgroundTasks):
+    """Notes in, finished deck out: the AI writes the text, then the deck is built."""
+    if req.cover and not req.title.strip():
+        raise HTTPException(400, "Give the cover slide a title.")
+    style_path, image_paths, capacity = _prepare(req)
+    contents, mode = _write(req, image_paths, capacity)
     if req.cover:
         contents.insert(0, SlideContent(page=0, kind="title", title=req.title.strip(), subtitle=req.subtitle.strip()))
+    return _build_and_save(style_path, req.style_id, req.title, req.model_dump(), contents, image_paths, mode, background)
 
-    return _build_and_save(style_path, req, contents, image_paths, mode, background)
+
+@app.post("/api/draft")
+def draft(req: GenerateRequest):
+    """The AI turns rough notes into slide text for the editor. Nothing is built."""
+    _, image_paths, capacity = _prepare(req)
+    contents, mode = _write(req, image_paths, capacity)
+    return {"mode": mode, "slides": [c.model_dump() for c in contents]}
+
+
+@app.post("/api/build", status_code=201)
+def build(req: BuildRequest, background: BackgroundTasks):
+    """Builds the slides exactly as the teacher edited them, in their style, without the AI."""
+    style = db.one("SELECT * FROM styles WHERE id=?", (req.style_id,))
+    if not style:
+        raise HTTPException(404, "That style no longer exists. Pick another one.")
+    pages = [s.page for s in req.slides]
+    if len(set(pages)) != len(pages):
+        raise HTTPException(400, "Each slide needs a different page number.")
+    contents = [SlideContent.model_validate(s.model_dump(exclude={"image_id"})) for s in req.slides]
+    cover = next((c for c in contents if c.page == 0), None)
+    title = req.title.strip() or (cover.title.strip() if cover else "")
+    return _build_and_save(Path(style["path"]), req.style_id, title, req.model_dump(), contents, _image_paths(req.slides), "manual", background)
 
 
 def _build_and_save(
     style_path: Path,
-    req: GenerateRequest,
+    style_id: str,
+    title: str,
+    request: dict,
     contents: list[SlideContent],
     image_paths: dict[int, Path],
     mode: str,
@@ -277,7 +369,7 @@ def _build_and_save(
     gen_id = uuid.uuid4().hex[:12]
     out_path = config.OUTPUTS_DIR / f"{gen_id}.pptx"
     try:
-        warnings = build_deck(style_path, contents, image_paths, out_path, deck_title=req.title)
+        warnings = build_deck(style_path, contents, image_paths, out_path, deck_title=title)
     except Exception:  # noqa: BLE001
         log.exception("Deck generation failed")
         out_path.unlink(missing_ok=True)
@@ -287,10 +379,10 @@ def _build_and_save(
         "INSERT INTO generations (id, style_id, title, mode, request, slides, warnings, path, preview_status) VALUES (?,?,?,?,?,?,?,?,?)",
         (
             gen_id,
-            req.style_id,
-            req.title or "Untitled slides",
+            style_id,
+            title or "Untitled slides",
             mode,
-            db.dumps(req.model_dump()),
+            db.dumps(request),
             db.dumps([c.model_dump() for c in contents]),
             db.dumps(warnings),
             str(out_path),
@@ -300,33 +392,6 @@ def _build_and_save(
     if previews_available():
         background.add_task(_render_in_background, "generations", "generations", gen_id, out_path)
     return _generation_out(db.one("SELECT * FROM generations WHERE id=?", (gen_id,)))
-
-
-@app.post("/api/generations/{gen_id}/rebuild", status_code=201)
-def rebuild_generation(gen_id: str, body: RebuildRequest, background: BackgroundTasks):
-    """Builds the teacher's edited slides again, in the same style, without calling the AI."""
-    row = db.one("SELECT * FROM generations WHERE id=?", (gen_id,))
-    if not row:
-        raise HTTPException(404, "Those slides no longer exist. Generate them again.")
-    style = db.one("SELECT * FROM styles WHERE id=?", (row["style_id"],))
-    if not style:
-        raise HTTPException(404, "The style these slides used was deleted, so they can't be rebuilt.")
-    req = GenerateRequest.model_validate(db.loads(row["request"]))
-    cover = next((s for s in body.slides if s.page == 0), None)
-    if cover and cover.title.strip():
-        req = req.model_copy(update={"title": cover.title.strip()})  # the edited cover names the deck
-
-    known = {s.page for s in req.slides} | ({0} if req.cover else set())
-    pages = [s.page for s in body.slides]
-    if len(set(pages)) != len(pages) or not set(pages) <= known:
-        raise HTTPException(400, "The edited slides don't match the original deck. Refresh and try again.")
-
-    image_paths: dict[int, Path] = {}
-    for spec in req.slides:
-        img = db.one("SELECT * FROM images WHERE id=?", (spec.image_id,)) if spec.image_id else None
-        if img and Path(img["path"]).exists():
-            image_paths[spec.page] = Path(img["path"])
-    return _build_and_save(Path(style["path"]), req, list(body.slides), image_paths, row["mode"], background)
 
 
 @app.get("/api/generations")

@@ -1,4 +1,4 @@
-import { Component, ElementRef, afterNextRender, input, output, viewChild } from '@angular/core';
+import { Component, ElementRef, afterRenderEffect, input, output, viewChild } from '@angular/core';
 import { TextRun } from '../core/models';
 
 /** Sizes are shown at half scale so a 44pt title fits the editor; the real size is kept in data-pt. */
@@ -83,8 +83,11 @@ type Format = Omit<TextRun, 'text'>;
   `,
 })
 export class RichTextEditor {
-  /** Starting content: one array of runs per paragraph. Read once; edits flow out through `changed`. */
-  readonly initial = input.required<TextRun[][]>();
+  /**
+   * Content: one array of runs per paragraph. Edits flow out through `changed`; the parent passes
+   * them back here, and the text is only redrawn when it differs (e.g. the AI wrote it).
+   */
+  readonly value = input.required<TextRun[][]>();
   readonly fonts = input<string[]>([]);
   readonly singleLine = input(false);
   readonly label = input('Text');
@@ -94,9 +97,16 @@ export class RichTextEditor {
   protected readonly sizes = SIZES;
   private readonly area = viewChild.required<ElementRef<HTMLDivElement>>('area');
   private range: Range | null = null;
+  /** What the editor shows, as JSON; null until first drawn. */
+  private shown: string | null = null;
 
   constructor() {
-    afterNextRender(() => (this.area().nativeElement.innerHTML = toHtml(this.initial())));
+    afterRenderEffect(() => {
+      const json = JSON.stringify(this.value());
+      if (json === this.shown) return;
+      this.shown = json;
+      this.area().nativeElement.innerHTML = toHtml(this.value());
+    });
   }
 
   protected fontList(): string[] {
@@ -164,7 +174,9 @@ export class RichTextEditor {
   }
 
   protected emit(): void {
-    this.changed.emit(fromDom(this.area().nativeElement));
+    const runs = fromDom(this.area().nativeElement);
+    this.shown = JSON.stringify(runs);
+    this.changed.emit(runs);
   }
 }
 

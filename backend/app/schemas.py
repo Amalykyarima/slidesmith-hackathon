@@ -57,7 +57,13 @@ class SlideContent(BaseModel):
     text_anchor: Literal["auto", "top", "middle", "bottom"] = "auto"
 
 
-class RebuildRequest(BaseModel):
-    """Edited slides for an existing generation; built again without calling the AI."""
+class BuildSlide(SlideContent):
+    image_id: str | None = None
 
-    slides: list[SlideContent] = Field(min_length=1, max_length=41)
+
+class BuildRequest(BaseModel):
+    """Slides exactly as the teacher sees them in the editor; built without calling the AI."""
+
+    style_id: str
+    title: str = Field(default="", max_length=200)
+    slides: list[BuildSlide] = Field(min_length=1, max_length=41)

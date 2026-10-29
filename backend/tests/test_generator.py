@@ -9,7 +9,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
-from app.generator import build_deck
+from app.generator import blank_layouts, build_deck
 from app.pptx_analysis import analyze_presentation
 from app.schemas import SlideContent
 
@@ -302,3 +302,16 @@ def test_very_long_line_still_builds(tmp_path):
     assert any("overflow" in w for w in warnings)
     slide = Presentation(str(out)).slides[0]
     assert any("word word" in sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+
+
+def test_blank_layouts_are_empty_but_keep_the_design(tmp_path):
+    out = tmp_path / "blank.pptx"
+    layouts = blank_layouts(FIX / "biology_dark.pptx", out)
+    assert [l["kind"] for l in layouts] == ["title", "content", "image", "section"]
+    assert layouts[2]["picture"], "the picture sample keeps its slot"
+    assert layouts[1]["title_look"]["color"] and layouts[1]["title_look"]["font"]
+    prs = Presentation(str(out))
+    assert len(prs.slides) == 4
+    text = " ".join(sh.text_frame.text for slide in prs.slides for sh in slide.shapes if sh.has_text_frame)
+    assert not text.strip(), f"sample text left on the blank template: {text!r}"
+    assert not any(sh.shape_type == MSO_SHAPE_TYPE.PICTURE for slide in prs.slides for sh in slide.shapes)

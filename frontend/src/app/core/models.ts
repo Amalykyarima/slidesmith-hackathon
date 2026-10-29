@@ -77,10 +77,64 @@ export interface SlideContent {
   text_anchor?: TextAnchor;
 }
 
+/** A slide as the editor sends it for building: exactly as shown, plus its picture. */
+export interface BuildSlide extends SlideContent {
+  image_id: string | null;
+}
+
+export interface BuildRequest {
+  style_id: string;
+  title: string;
+  slides: BuildSlide[];
+}
+
+/** Slide text the AI (or demo mode) wrote from the teacher's notes; nothing is built yet. */
+export interface Draft {
+  mode: 'ai' | 'mock';
+  slides: SlideContent[];
+}
+
+/** How a sample's text looks, so the live preview can imitate it. Null: not known. */
+export interface TextLook {
+  size: number;
+  bold: boolean | null;
+  italic: boolean | null;
+  color: string | null;
+  font: string | null;
+  align: 'left' | 'center' | 'right' | null;
+  anchor: 'top' | 'middle' | 'bottom' | null;
+  bullets: boolean;
+}
+
+/** Box as fractions of the slide: [left, top, width, height]. */
+export type Box = [number, number, number, number];
+
+/** One blank slide of the style and where it puts its title, body and picture. */
+export interface Layout {
+  kind: 'title' | 'content' | 'image' | 'section';
+  title: Box | null;
+  body: Box | null;
+  picture: Box | null;
+  /** Space the body and picture share; preset picture positions split it. */
+  area: Box;
+  title_look: TextLook | null;
+  body_look: TextLook | null;
+  /** The blank slide rendered, once ready. */
+  image: string | null;
+}
+
+export interface StyleLayouts {
+  status: PreviewStatus;
+  slide_size_in: [number, number];
+  background_tone: 'dark' | 'light' | 'image';
+  layouts: Layout[];
+}
+
 export interface Generation {
   id: string;
   title: string;
-  mode: 'ai' | 'mock';
+  /** manual: built from the editor exactly as typed. */
+  mode: 'ai' | 'mock' | 'manual';
   style_id: string;
   created_at: string;
   slides: SlideContent[];

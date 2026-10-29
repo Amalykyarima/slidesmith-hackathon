@@ -117,37 +117,63 @@ def test_cover_slide_comes_first_in_order():
         assert c.post("/api/generate", json=no_title).status_code == 400
 
 
-def test_rebuild_applies_edits_without_ai():
+def test_draft_writes_text_without_building():
+    with TestClient(app) as c:
+        style = c.post("/api/styles", files={"file": ("biology_dark.pptx", (FIX / "biology_dark.pptx").read_bytes())}).json()
+        before = len(c.get("/api/generations").json())
+        r = c.post("/api/draft", json={
+            "style_id": style["id"], "title": "Cells", "cover": True,
+            "slides": [{"page": 1, "details": "Parts of a cell\nNucleus\nMembrane"}],
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["slides"][0] == {**r.json()["slides"][0], "page": 1, "title": "Parts of a cell", "bullets": ["Nucleus", "Membrane"]}
+        assert len(c.get("/api/generations").json()) == before, "a draft builds nothing"
+        assert c.post("/api/draft", json={"style_id": "nope", "slides": [{"page": 1}]}).status_code == 404
+
+
+def test_build_uses_the_teachers_slides_as_edited():
     with TestClient(app) as c:
         style = c.post("/api/styles", files={"file": ("biology_dark.pptx", (FIX / "biology_dark.pptx").read_bytes())}).json()
         image_id = c.post("/api/images", files={"file": ("cell.png", (FIX / "sample_diagram.png").read_bytes())}).json()["id"]
-        gen = c.post("/api/generate", json={
-            "style_id": style["id"], "title": "Cells", "cover": True,
-            "slides": [
-                {"page": 1, "details": "Parts of a cell\nNucleus\nMembrane"},
-                {"page": 2, "details": "Label the diagram", "image_id": image_id},
-            ],
-        }).json()
-
-        slides = gen["slides"]
-        slides[0]["title"] = "Cells and Photosynthesis"
-        slides[0]["title_runs"] = [{"text": "Cells and Photosynthesis"}]
-        slides[1]["title_runs"] = [{"text": "Parts of a "}, {"text": "cell", "bold": True, "color": "#00B050"}]
-        slides[2]["image_position"] = "left"
-        r = c.post(f"/api/generations/{gen['id']}/rebuild", json={"slides": slides})
+        slides = [
+            {"page": 0, "kind": "title", "title": "Cells and Photosynthesis", "subtitle": "Year 9"},
+            {"page": 1, "kind": "content", "title": "Parts of a cell",
+             "title_runs": [{"text": "Parts of a "}, {"text": "cell", "bold": True, "color": "#00B050"}],
+             "body_runs": [[{"text": "Nucleus"}], [{"text": "Membrane", "highlight": "#FFFF00"}]]},
+            {"page": 2, "kind": "content", "title": "Label the diagram", "image_id": image_id, "image_position": "left"},
+        ]
+        r = c.post("/api/build", json={"style_id": style["id"], "slides": slides})
         assert r.status_code == 201, r.text
-        new = r.json()
-        assert new["id"] != gen["id"] and new["mode"] == gen["mode"]
-        assert new["title"] == "Cells and Photosynthesis", "the edited cover renames the deck"
-        assert new["slides"][1]["title_runs"][1]["bold"] is True
+        gen = r.json()
+        assert gen["mode"] == "manual" and gen["image_pages"] == [2]
+        assert gen["title"] == "Cells and Photosynthesis", "the cover names the deck"
 
-        prs = Presentation(str(Path(os.environ["STORAGE_DIR"]) / "outputs" / f"{new['id']}.pptx"))
-        assert len(prs.slides) == 3 and prs.core_properties.title == "Cells and Photosynthesis"
+        prs = Presentation(str(Path(os.environ["STORAGE_DIR"]) / "outputs" / f"{gen['id']}.pptx"))
+        texts = ["\n".join(s.text_frame.text for s in slide.shapes if s.has_text_frame) for slide in prs.slides]
+        assert len(texts) == 3 and prs.core_properties.title == "Cells and Photosynthesis"
+        assert "Year 9" in texts[0] and "Nucleus\n• Membrane" in texts[1], texts
         title_run = next(r for sh in prs.slides[1].shapes if sh.has_text_frame
                          for p in sh.text_frame.paragraphs for r in p.runs if r.text == "cell")
         assert title_run.font.bold and str(title_run.font.color.rgb) == "00B050"
-        assert any(sh.shape_type == 13 for sh in prs.slides[2].shapes), "the original picture is reused"
+        assert any(sh.shape_type == 13 for sh in prs.slides[2].shapes), "the picture is placed"
 
-        assert c.post("/api/generations/nope/rebuild", json={"slides": slides}).status_code == 404
-        bad = [*slides, {**slides[1], "page": 9}]
-        assert c.post(f"/api/generations/{gen['id']}/rebuild", json={"slides": bad}).status_code == 400
+        dup = [slides[1], {**slides[1]}]
+        assert c.post("/api/build", json={"style_id": style["id"], "slides": dup}).status_code == 400
+        lost = [{**slides[2], "image_id": "gone"}]
+        assert c.post("/api/build", json={"style_id": style["id"], "slides": lost}).status_code == 400
+        assert c.post("/api/build", json={"style_id": "nope", "slides": slides}).status_code == 404
+
+
+def test_blank_layouts_describe_where_text_goes():
+    with TestClient(app) as c:
+        style = c.post("/api/styles", files={"file": ("biology_dark.pptx", (FIX / "biology_dark.pptx").read_bytes())}).json()
+        r = c.get(f"/api/styles/{style['id']}/layouts")
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert [l["kind"] for l in data["layouts"]] == ["title", "content", "image", "section"]
+        content = data["layouts"][1]
+        assert content["title"] and content["body"] and content["body_look"]["size"] > 0
+        assert all(0 <= v <= 1.01 for v in content["title"])
+        again = c.get(f"/api/styles/{style['id']}/layouts").json()
+        assert again["layouts"][1]["title"] == content["title"], "cached"
+        assert c.get("/api/styles/nope/layouts").status_code == 404

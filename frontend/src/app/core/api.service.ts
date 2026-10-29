@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { GenerateRequest, Generation, Health, SlideContent, SlideStyle, UploadedImage } from './models';
+import { BuildRequest, Draft, GenerateRequest, Generation, Health, SlideStyle, StyleLayouts, UploadedImage } from './models';
 
 /** All backend calls live here. Paths are relative; `proxy.conf.json` forwards them to FastAPI in dev. */
 @Injectable({ providedIn: 'root' })
@@ -31,6 +31,11 @@ export class ApiService {
     return this.http.delete<void>(`/api/styles/${id}`);
   }
 
+  /** The style's blank slides, for the live preview. `status` is 'pending' while they render. */
+  layouts(id: string): Observable<StyleLayouts> {
+    return this.http.get<StyleLayouts>(`/api/styles/${id}/layouts`);
+  }
+
   uploadImage(file: File): Observable<UploadedImage> {
     const body = new FormData();
     body.append('file', file);
@@ -45,12 +50,17 @@ export class ApiService {
     return this.http.post<Generation>('/api/generate', request);
   }
 
-  /** Builds edited slides again in the same style, without calling the AI. Returns a new generation. */
-  rebuild(id: string, slides: SlideContent[]): Observable<Generation> {
-    return this.http.post<Generation>(`/api/generations/${id}/rebuild`, { slides });
+  /** The AI writes slide text from rough notes. Nothing is built. */
+  draft(request: GenerateRequest): Observable<Draft> {
+    return this.http.post<Draft>('/api/draft', request);
   }
 
-    getGeneration(id: string): Observable<Generation> {
+  /** Builds the slides exactly as edited, in the style, without the AI. */
+  build(request: BuildRequest): Observable<Generation> {
+    return this.http.post<Generation>('/api/build', request);
+  }
+
+  getGeneration(id: string): Observable<Generation> {
     return this.http.get<Generation>(`/api/generations/${id}`);
   }
 }

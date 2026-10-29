@@ -24,6 +24,7 @@ from pptx.util import Emu
 from .pptx_analysis import (
     EMU_PER_PT,
     SlideInfo,
+    _theme_colors_and_fonts,
     analyze_presentation,
     resolve_pt,
     shape_by_id,
@@ -467,6 +468,52 @@ def _layout_target(prs, kind: str) -> Target:
     return Target(slide=slide, title=title, body=body)
 
 
+def _make_target(prs, originals, infos: list[SlideInfo], kind: str, usage: Counter, warnings: list[str], noted: set) -> Target:
+    """Clones the best sample slide for `kind` and strips its sample content."""
+    if not infos:
+        return _layout_target(prs, kind)
+    info = pick_exemplar(infos, kind, usage)
+    usage[info.index] += 1
+    if info.kind != kind and (kind, info.kind) not in noted:
+        noted.add((kind, info.kind))
+        warnings.append(
+            f"Your style has no '{kind}' sample slide, so '{info.kind}' samples were used instead. "
+            f"Add a sample slide like that for better results."
+        )
+    slide = clone_slide(prs, originals[info.index])
+    target = Target(
+        slide=slide,
+        title=shape_by_id(slide, info.title_id) if info.title_id is not None else None,
+        body=shape_by_id(slide, info.body_id) if info.body_id is not None else None,
+        picture_els=[shape_by_id(slide, pid)._element for pid in info.picture_ids if shape_by_id(slide, pid) is not None],
+        info=info,
+    )
+    for sid in info.stale_ids:
+        stale = shape_by_id(slide, sid)
+        if stale is not None:
+            stale._element.getparent().remove(stale._element)
+    return target
+
+
+def _finish(prs, originals: list, out_path: Path, deck_title: str = "") -> None:
+    """Drops the original sample slides and saves only the new ones."""
+    sld_id_lst = prs.slides._sldIdLst
+    for sld_id in list(sld_id_lst)[: len(originals)]:
+        prs.part.drop_rel(sld_id.rId)
+        sld_id_lst.remove(sld_id)
+
+    # Sections reference slide ids that no longer exist; PowerPoint would "repair" the file.
+    ext_lst = prs._element.find(qn("p:extLst"))
+    if ext_lst is not None:
+        for ext in list(ext_lst):
+            if ext.get("uri") == SECTION_EXT_URI:
+                ext_lst.remove(ext)
+
+    if deck_title:
+        prs.core_properties.title = deck_title
+    prs.save(str(out_path))
+
+
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
@@ -488,35 +535,8 @@ def build_deck(
         label = "Cover" if content.page == 0 else f"Slide {content.page}"
         image = image_paths.get(content.page)
         kind = "image" if image else content.kind
-
-        if infos:
-            info = pick_exemplar(infos, kind, usage)
-            usage[info.index] += 1
-            if info.kind != kind and (kind, info.kind) not in noted:
-                noted.add((kind, info.kind))
-                warnings.append(
-                    f"Your style has no '{kind}' sample slide, so '{info.kind}' samples were used instead. "
-                    f"Add a sample slide like that for better results."
-                )
-            slide = clone_slide(prs, originals[info.index])
-            target = Target(
-                slide=slide,
-                title=shape_by_id(slide, info.title_id) if info.title_id is not None else None,
-                body=shape_by_id(slide, info.body_id) if info.body_id is not None else None,
-                picture_els=[
-                    shape_by_id(slide, pid)._element
-                    for pid in info.picture_ids
-                    if shape_by_id(slide, pid) is not None
-                ],
-                info=info,
-            )
-            for sid in info.stale_ids:
-                stale = shape_by_id(slide, sid)
-                if stale is not None:
-                    stale._element.getparent().remove(stale._element)
-        else:
-            target = _layout_target(prs, kind)
-            slide = target.slide
+        target = _make_target(prs, originals, infos, kind, usage, warnings, noted)
+        slide = target.slide
 
         # ---- layout chosen by the teacher -------------------------------- #
         alt = f"Image for {label}: {content.title}"
@@ -573,20 +593,104 @@ def build_deck(
         if content.notes.strip():
             slide.notes_slide.notes_text_frame.text = content.notes.strip()
 
-    # Drop the original sample slides, keep only the new ones.
-    sld_id_lst = prs.slides._sldIdLst
-    for sld_id in list(sld_id_lst)[: len(originals)]:
-        prs.part.drop_rel(sld_id.rId)
-        sld_id_lst.remove(sld_id)
-
-    # Sections reference slide ids that no longer exist; PowerPoint would "repair" the file.
-    ext_lst = prs._element.find(qn("p:extLst"))
-    if ext_lst is not None:
-        for ext in list(ext_lst):
-            if ext.get("uri") == SECTION_EXT_URI:
-                ext_lst.remove(ext)
-
-    if deck_title:
-        prs.core_properties.title = deck_title
-    prs.save(str(out_path))
+    _finish(prs, originals, out_path, deck_title)
     return warnings
+
+
+# --------------------------------------------------------------------------- #
+# Blank template (for the editor's live preview)
+# --------------------------------------------------------------------------- #
+LAYOUT_KINDS = ("title", "content", "image", "section")
+# Theme colour names used in text, as named in the theme's colour scheme.
+_SCHEME_ALIAS = {"tx1": "dk1", "tx2": "dk2", "bg1": "lt1", "bg2": "lt2"}
+_ALIGN_NAMES = {v: k for k, v in _ALIGN.items()}
+_ANCHOR_NAMES = {v: k for k, v in _ANCHOR.items()}
+
+
+def _fraction(box: tuple[int, int, int, int] | None, slide_w: int, slide_h: int) -> list[float] | None:
+    if box is None:
+        return None
+    left, top, width, height = box
+    return [round(left / slide_w, 4), round(top / slide_h, 4), round(width / slide_w, 4), round(height / slide_h, 4)]
+
+
+def _color_of(node, theme_colors: dict[str, str]) -> str | None:
+    fill = node.find(qn("a:solidFill")) if node is not None else None
+    if fill is None:
+        return None
+    srgb, scheme = fill.find(qn("a:srgbClr")), fill.find(qn("a:schemeClr"))
+    if srgb is not None:
+        return "#" + srgb.get("val").upper()
+    if scheme is not None:
+        name = scheme.get("val")
+        found = theme_colors.get(_SCHEME_ALIAS.get(name, name))
+        return "#" + found if found else None
+    return None
+
+
+def _look(shape, slide, is_title: bool, theme_colors: dict[str, str], theme_fonts: dict[str, str]) -> dict:
+    """How the sample's text looks, so the live preview can imitate it. Unknowns stay None."""
+    tx = shape.text_frame._txBody
+    para = max(tx.findall(qn("a:p")), key=lambda p: len(_para_text(p)), default=None)
+    rpr = para.find(f"{qn('a:r')}/{qn('a:rPr')}") if para is not None else None
+    look: dict = {"size": resolve_pt(shape, slide, is_title), "bold": None, "italic": None, "color": None, "font": None}
+    if rpr is not None:
+        for key, attr in (("bold", "b"), ("italic", "i")):
+            if rpr.get(attr) is not None:
+                look[key] = rpr.get(attr) in ("1", "true")
+        look["color"] = _color_of(rpr, theme_colors)
+        latin = rpr.find(qn("a:latin"))
+        face = latin.get("typeface") if latin is not None else None
+        if face:
+            look["font"] = theme_fonts.get("heading" if face.startswith("+mj") else "body") if face.startswith("+") else face
+    if look["color"] is None and shape.is_placeholder:
+        styles = slide.slide_layout.slide_master._element.find(qn("p:txStyles"))
+        style = styles.find(qn("p:titleStyle" if is_title else "p:bodyStyle")) if styles is not None else None
+        defrpr = style.find(f"{qn('a:lvl1pPr')}/{qn('a:defRPr')}") if style is not None else None
+        look["color"] = _color_of(defrpr, theme_colors)
+    look["font"] = look["font"] or theme_fonts.get("heading" if is_title else "body")
+    ppr = para.find(qn("a:pPr")) if para is not None else None
+    look["align"] = _ALIGN_NAMES.get(ppr.get("algn")) if ppr is not None else None
+    look["anchor"] = _ANCHOR_NAMES.get(tx.find(qn("a:bodyPr")).get("anchor"))
+    # Bullets: typed by hand ("• Point"), or a body placeholder whose paragraph doesn't turn them off.
+    typed = bool(LITERAL_BULLET.match(_para_text(para))) if para is not None else False
+    body_ph = shape.is_placeholder and shape.placeholder_format.type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
+    look["bullets"] = not is_title and (typed or (body_ph and (ppr is None or ppr.find(qn("a:buNone")) is None)))
+    return look
+
+
+def blank_layouts(style_path: Path, out_path: Path) -> list[dict]:
+    """
+    Builds one empty slide per kind (cover, content, picture, section) from the samples that real
+    builds would pick, saves them to `out_path`, and returns where each slide puts its title, body
+    and picture (as fractions of the slide) and how its text looks.
+    """
+    prs = Presentation(str(style_path))
+    originals = list(prs.slides)
+    infos = analyze_presentation(prs)
+    theme_colors, theme_fonts = _theme_colors_and_fonts(prs)
+    slide_w, slide_h = prs.slide_width, prs.slide_height
+    layouts: list[dict] = []
+    for kind in LAYOUT_KINDS:
+        target = _make_target(prs, originals, infos, kind, Counter(), [], set())
+        slide = target.slide
+        pictures = [b for b in (_element_box(e) for e in target.picture_els) if b]
+        layouts.append(
+            {
+                "kind": kind,
+                "title": _fraction(_box_of(target.title), slide_w, slide_h) if target.title is not None else None,
+                "body": _fraction(_box_of(target.body), slide_w, slide_h) if target.body is not None else None,
+                "picture": _fraction(max(pictures, key=lambda b: b[2] * b[3]), slide_w, slide_h) if pictures else None,
+                "area": _fraction(_content_area(prs, target), slide_w, slide_h),
+                "title_look": _look(target.title, slide, True, theme_colors, theme_fonts) if target.title is not None else None,
+                "body_look": _look(target.body, slide, False, theme_colors, theme_fonts) if target.body is not None else None,
+            }
+        )
+        for shape in (target.title, target.body):
+            if shape is not None:
+                fill_text(shape, slide, [""], shape is target.title, [], "")
+        for el in target.picture_els:
+            if el.getparent() is not None:
+                el.getparent().remove(el)
+    _finish(prs, originals, out_path)
+    return layouts
