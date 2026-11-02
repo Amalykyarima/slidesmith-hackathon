@@ -19,6 +19,8 @@ from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
 from pptx.slide import Slide
 
+from .roles import is_lesson_label, role_of
+
 EMU_PER_PT = 12700
 
 _SKIP_PLACEHOLDERS = {
@@ -46,6 +48,8 @@ class SlideInfo:
     title_pt: float = 36
     body_pt: float = 20
     preview_text: str = ""
+    role: str | None = None  # routine role, e.g. "retrieval", "turn_and_talk" (see roles.py)
+    clutter: int = 0  # extra sample content that has to be stripped; lower is a cleaner exemplar
 
     def to_dict(self) -> dict:
         return {
@@ -56,6 +60,7 @@ class SlideInfo:
             "pictures": len(self.picture_ids),
             "complex": self.complex,
             "preview_text": self.preview_text,
+            "role": self.role,
         }
 
 
@@ -90,6 +95,40 @@ def _is_picture(shape) -> bool:
         return True
     # Picture placeholders that have been filled
     return shape._element.tag == qn("p:pic")
+
+
+def _is_decoration(pic, slide_area: int, repeated: frozenset[str]) -> bool:
+    """Part of the style, not the lesson: full-bleed backgrounds, and small images
+    repeated across slides (logos, icons, badges). A big photo reused on two slides
+    is still lesson content."""
+    area = _area(pic)
+    if area >= 0.85 * slide_area:
+        return True
+    return area < 0.05 * slide_area and _image_hash(pic) in repeated
+
+
+def _overlap_ratio(shape, other) -> float:
+    """Share of `shape`'s area that `other` covers."""
+    try:
+        x1, y1 = max(shape.left, other.left), max(shape.top, other.top)
+        x2 = min(shape.left + shape.width, other.left + other.width)
+        y2 = min(shape.top + shape.height, other.top + other.height)
+    except TypeError:
+        return 0.0
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+    return (x2 - x1) * (y2 - y1) / max(_area(shape), 1)
+
+
+def _text(shape) -> str:
+    return shape.text_frame.text.strip() if shape.has_text_frame else ""
+
+
+def _is_title_like(shape) -> bool:
+    """Short text in one or two lines: a heading, not a box of questions."""
+    text = _text(shape)
+    paras = [p for p in shape.text_frame.paragraphs if p.text.strip()]
+    return bool(text) and len(paras) <= 2 and len(text) <= 100 and not is_lesson_label(text)
 
 
 def _is_text_candidate(shape) -> bool:
@@ -173,37 +212,66 @@ def analyze_slide(
         for s in slide.shapes
         if _is_picture(s)
         and 0.10 * slide_area < _area(s) < 0.85 * slide_area
-        and _image_hash(s) not in repeated
+        and not _is_decoration(s, slide_area, repeated)
     ]
+    # Pictures that can carry a caption: not full-bleed backgrounds, not logos repeated on every slide.
+    pictures = [s for s in slide.shapes if _is_picture(s) and not _is_decoration(s, slide_area, repeated)]
     complex_ = any(
         s.shape_type in (MSO_SHAPE_TYPE.TABLE, MSO_SHAPE_TYPE.CHART)
         or getattr(s, "has_table", False)
         or getattr(s, "has_chart", False)
+        # content built from grouped cards (picture + caption + text) can't be refilled safely
+        or (s.shape_type == MSO_SHAPE_TYPE.GROUP and _area(s) > 0.10 * slide_area)
         for s in slide.shapes
     )
 
     # --- title ---------------------------------------------------------- #
     title = next((s for s in text_shapes if _ph_type(s) in _TITLE_PLACEHOLDERS), None)
     if title is None and text_shapes:
-        # biggest font wins; ties broken by position (higher on the slide first)
+        # Biggest font wins, ties broken by position (higher first). Prefer heading-like
+        # boxes: a long box of questions in a big font is the body, not the title.
+        pool = [s for s in text_shapes if _is_title_like(s) and resolve_pt(s, slide, True) >= 12] or text_shapes
         title = sorted(
-            text_shapes,
-            key=lambda s: (-resolve_pt(s, slide, True), s.top or 0, s.left or 0),
+            pool,
+            key=lambda s: (-round(resolve_pt(s, slide, True) / 4), s.top or 0, s.left or 0),
         )[0]
 
     # --- body ----------------------------------------------------------- #
     rest = [s for s in text_shapes if s is not title]
-    body = next((s for s in rest if _ph_type(s) in _SUBTITLE_PLACEHOLDERS), None)
-    body_candidates = [s for s in rest if s.text_frame.text.strip() or s.is_placeholder]
-    if body is None and body_candidates:
-        body = sorted(body_candidates, key=lambda s: -_area(s))[0]
 
-    # Text boxes that carry sample content but aren't title/body: footers & labels
-    # are small and stay; big ones are stale sample content and get removed later.
+    def usable_body(s) -> bool:
+        # Not a tiny badge ("Climate 1 'I do'"), not a lesson label (LO / Keywords),
+        # and not a caption sitting on top of a picture.
+        if _area(s) < 0.03 * slide_area or resolve_pt(s, slide, False) < 9:
+            return False
+        if is_lesson_label(_text(s)):
+            return False
+        return not any(_overlap_ratio(s, pic) > 0.5 for pic in pictures)
+
+    body = next((s for s in rest if _ph_type(s) in _SUBTITLE_PLACEHOLDERS and usable_body(s)), None)
+    body_candidates = [s for s in rest if (_text(s) or s.is_placeholder) and usable_body(s)]
+    if body is None and body_candidates:
+        placeholders = [s for s in body_candidates if s.is_placeholder]
+        # Big box in a readable font: a large box of 14pt links loses to the question in 24pt.
+        body = sorted(
+            placeholders or body_candidates,
+            key=lambda s: -_area(s) * min(resolve_pt(s, slide, False), 40),
+        )[0]
+
+    # Text boxes that carry sample content but aren't title/body: big ones are stale
+    # sample content, and LO / Keywords labels belong to the sample's lesson. Small
+    # footers and badges stay as part of the style.
+    # Captions laid over a sample picture go with that picture.
     stale = [
         s.shape_id
         for s in rest
-        if s is not body and _area(s) > 0.08 * slide_area and s.text_frame.text.strip()
+        if s is not body
+        and _text(s)
+        and (
+            _area(s) > 0.08 * slide_area
+            or is_lesson_label(_text(s))
+            or any(_overlap_ratio(s, pic) > 0.5 for pic in big_pictures)
+        )
     ]
 
     body_text = body.text_frame.text.strip() if body is not None else ""
@@ -235,8 +303,26 @@ def analyze_slide(
         title_pt=resolve_pt(title, slide, True) if title is not None else 36,
         body_pt=resolve_pt(body, slide, False) if body is not None else 20,
         preview_text=(title.text_frame.text.strip()[:80] if title is not None else ""),
+        role=_slide_role(title, rest),
+        clutter=len(stale) + len(big_pictures),
     )
     return info
+
+
+def _slide_role(title, others) -> str | None:
+    """The heading names the role if it can; otherwise any label on the slide
+    (e.g. a "Retrieval Practice:" box or a "Climate 1 'I do'" badge)."""
+    if title is not None:
+        role = role_of(_text(title))
+        if role:
+            return role
+    for s in others:
+        text = _text(s)
+        if text and not is_lesson_label(text):
+            role = role_of(text)
+            if role:
+                return role
+    return None
 
 
 def _repeated_images(prs) -> frozenset[str]:
@@ -269,10 +355,12 @@ def content_capacity(prs, infos: list[SlideInfo]) -> dict:
         pt = max(info.body_pt, 10)
         lines = max(h_pt / (pt * 1.25), 1)
         chars_per_line = max(w_pt / (pt * 0.5), 10)
-        bullets.append(max(3, min(7, int(lines / 1.6))))
-        words.append(max(8, min(18, int(chars_per_line * 1.5 / 6))))
+        # Generous floors: the generator shrinks the font to fit, and a teacher's five
+        # retrieval questions must never be squeezed into three.
+        bullets.append(max(6, min(8, int(lines / 1.6))))
+        words.append(max(14, min(25, int(chars_per_line * 1.5 / 6))))
     if not bullets:
-        return {"max_bullets": 5, "max_words_per_bullet": 14}
+        return {"max_bullets": 6, "max_words_per_bullet": 16}
     bullets.sort()
     words.sort()
     return {
@@ -389,3 +477,26 @@ def extract_style_profile(path: Path) -> dict:
         "exemplars": [i.to_dict() for i in infos],
         "layout_names": [l.name for l in prs.slide_layouts][:12],
     }
+
+
+def style_roles(prs, infos: list[SlideInfo]) -> dict[str, dict[str, str]]:
+    """Routine slides this style has, with an example heading each (for the AI prompt).
+
+    When the role isn't in the heading (e.g. a retrieval slide headed "Nutrients
+    24th Sep" whose body starts "Retrieval Practice:"), `label` holds that first
+    body line so new slides can repeat it."""
+    found: dict[str, dict[str, str]] = {}
+    for info in infos:
+        if not info.role or info.role in found or info.complex:
+            continue
+        slide = prs.slides[info.index]
+        title = shape_by_id(slide, info.title_id) if info.title_id else None
+        body = shape_by_id(slide, info.body_id) if info.body_id else None
+        title_text = " ".join(_text(title).split())[:60] if title is not None else ""
+        label = ""
+        if role_of(title_text) is None and body is not None:
+            first = next((p.text.strip() for p in body.text_frame.paragraphs if p.text.strip()), "")
+            if role_of(first) == info.role and len(first) <= 40:
+                label = first
+        found[info.role] = {"title": title_text, "label": label}
+    return found

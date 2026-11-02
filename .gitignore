@@ -10,3 +10,4 @@ backend/tests/out/
 # stray generated test outputs
 backend/tests/out_*.pptx
 .pytest_cache/
+backend/.venv
