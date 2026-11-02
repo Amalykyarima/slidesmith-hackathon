@@ -10,7 +10,8 @@ import tempfile
 import threading
 from pathlib import Path
 
-import pymupdf
+import gc
+import sys
 
 from . import config
 
@@ -22,6 +23,36 @@ def previews_available() -> bool:
     return config.SOFFICE is not None
 
 
+def release_memory() -> None:
+    """Hand freed memory back to the system (glibc keeps it otherwise)."""
+    gc.collect()
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass  # not glibc (e.g. macOS): nothing to do
+
+
+def _first_slides(pptx_path: Path, tmp: Path, limit: int) -> Path:
+    """On small servers, preview only the first `limit` slides: LibreOffice needed
+    ~675 MB for a 70-slide deck, more than a 512 MB free instance has."""
+    if limit <= 0:
+        return pptx_path
+    from pptx import Presentation
+
+    prs = Presentation(str(pptx_path))
+    ids = prs.slides._sldIdLst
+    if len(ids) <= limit:
+        return pptx_path
+    for sld_id in list(ids)[limit:]:
+        prs.part.drop_rel(sld_id.rId)
+        ids.remove(sld_id)
+    trimmed = tmp / f"{pptx_path.stem}.pptx"
+    prs.save(str(trimmed))
+    return trimmed
+
+
 def render_previews(pptx_path: Path, out_dir: Path, max_pages: int = 40, width_px: int = 640) -> int:
     """Renders slide thumbnails to out_dir/1.jpg, 2.jpg ... Returns how many were written."""
     if not config.SOFFICE:
@@ -30,7 +61,9 @@ def render_previews(pptx_path: Path, out_dir: Path, max_pages: int = 40, width_p
     for old in out_dir.glob("*.jpg"):
         old.unlink()
 
+    release_memory()  # the request that built the deck is done; free its memory before LibreOffice starts
     with _lock, tempfile.TemporaryDirectory() as tmp:
+        pptx_path = _first_slides(Path(pptx_path), Path(tmp), config.PREVIEW_MAX_SLIDES)
         profile = Path(tmp) / "lo-profile"
         cmd = [
             config.SOFFICE,
@@ -47,13 +80,9 @@ def render_previews(pptx_path: Path, out_dir: Path, max_pages: int = 40, width_p
         if not pdf_path.exists():
             raise RuntimeError("LibreOffice did not produce a PDF")
 
-        count = 0
-        with pymupdf.open(pdf_path) as doc:
-            for i, page in enumerate(doc):
-                if i >= max_pages:
-                    break
-                zoom = width_px / page.rect.width
-                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
-                pix.save(str(out_dir / f"{i + 1}.jpg"), jpg_quality=80)
-                count += 1
-        return count
+        # Separate process: PyMuPDF costs ~140 MB just to import (see raster.py).
+        done = subprocess.run(
+            [sys.executable, "-m", "app.raster", str(pdf_path), str(out_dir), str(width_px), str(max_pages)],
+            check=True, timeout=120, capture_output=True, text=True, cwd=str(config.BASE_DIR),
+        )
+        return int(done.stdout.strip() or 0)

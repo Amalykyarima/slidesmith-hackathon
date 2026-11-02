@@ -54,6 +54,12 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Added later: who owns each row (the signed-in teacher; "" when sign-in is off).
+        for table in ("styles", "images", "generations"):
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN owner TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass  # already there
 
 
 def one(sql: str, params: tuple = ()) -> dict[str, Any] | None:
