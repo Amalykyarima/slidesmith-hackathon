@@ -432,37 +432,60 @@ def page_role(content: SlideContent) -> str | None:
     return role_of(content.title) or (role_of(content.bullets[0]) if content.bullets else None)
 
 
-def pick_exemplar(
-    infos: list[SlideInfo], kind: str, usage: Counter, role: str | None = None
-) -> tuple[SlideInfo, bool]:
-    """Best sample slide for a page. Returns (sample, matched_by_role).
+def rank_exemplars(
+    infos: list[SlideInfo],
+    kind: str,
+    usage: Counter,
+    role: str | None = None,
+    needs_body: bool = False,
+) -> list[tuple[SlideInfo, bool]]:
+    """Sample slides for a page, best first, as (sample, matched_by_role).
 
     A page with a routine role ("Turn and Talk", "Retrieval Practice"...) uses a sample
     with the same role. Ordinary teaching pages use ordinary or "I do" samples, never
-    another routine's slide. Cleaner samples (less sample content to strip) win, then
-    the least-used one so repeated pages vary.
+    another routine's slide. A page with bullet points prefers samples that have a body
+    to hold them; samples without one only come last. Cleaner samples (less sample
+    content to strip) win, then the least-used one so repeated pages vary.
     """
     order = FALLBACKS[kind]
     usable = [i for i in infos if not i.complex and i.title_id is not None] or [
         i for i in infos if not i.complex
     ] or infos
 
-    def rank(i: SlideInfo):
+    def holds_text(i: SlideInfo) -> int:
+        return 0 if (not needs_body or i.body_id is not None) else 1
+
+    def role_rank(i: SlideInfo):
         kind_rank = order.index(i.kind) if i.kind in order else len(order)
-        return (i.clutter, kind_rank, usage[i.index], i.index)
+        return (holds_text(i), i.clutter, kind_rank, usage[i.index], i.index)
+
+    ranked: list[tuple[SlideInfo, bool]] = []
+    seen: set[int] = set()
+
+    def add(pool, by_role: bool, key) -> None:
+        for i in sorted(pool, key=key):
+            if i.index not in seen:
+                seen.add(i.index)
+                ranked.append((i, by_role))
 
     if role:
-        pool = [i for i in usable if i.role == role]
-        if pool:
-            return min(pool, key=rank), True
+        add([i for i in usable if i.role == role], True, role_rank)
 
     for allowed in ({None, "i_do"}, set(ROLES) - {"exit"} | {None}):
         candidates = [i for i in usable if i.role in allowed]
         for wanted in order:
-            pool = [i for i in candidates if i.kind == wanted]
-            if pool:
-                return min(pool, key=lambda i: (i.clutter, usage[i.index], i.index)), False
-    return infos[0], False
+            add([i for i in candidates if i.kind == wanted], False,
+                lambda i: (holds_text(i), i.clutter, usage[i.index], i.index))
+    # Samples that can't hold the text go after every sample that can.
+    ranked.sort(key=lambda pair: holds_text(pair[0]))  # stable: keeps the order above
+    return ranked or [(infos[0], False)]
+
+
+def pick_exemplar(
+    infos: list[SlideInfo], kind: str, usage: Counter, role: str | None = None, needs_body: bool = False
+) -> tuple[SlideInfo, bool]:
+    """Best single sample for a page (see `rank_exemplars`)."""
+    return rank_exemplars(infos, kind, usage, role, needs_body)[0]
 
 
 def _layout_target(prs, kind: str) -> Target:
@@ -504,6 +527,129 @@ def _layout_target(prs, kind: str) -> Target:
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+MAX_ATTEMPTS = 4  # sample slides tried per page before settling for the best attempt
+
+
+def _missing_warning(label: str, missing: list[str]) -> str:
+    shown = "; ".join(f'"{m[:50]}{"…" if len(m) > 50 else ""}"' for m in missing[:3])
+    more = f" and {len(missing) - 3} more" if len(missing) > 3 else ""
+    return (f"{label}: {len(missing)} line(s) didn't fit on any of your sample slides and are missing: "
+            f"{shown}{more}. Split this page in two or add a sample slide with more room.")
+
+
+def _norm_text(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def _expected_lines(content: SlideContent) -> list[str]:
+    """Every piece of text the page must show: title, bullets (or subtitle)."""
+    lines = [content.title] if content.title.strip() else []
+    if content.bullets:
+        lines += content.bullets
+    elif content.subtitle.strip():
+        lines.append(content.subtitle)
+    return [ln for ln in lines if ln.strip()]
+
+
+def missing_text(slide, content: SlideContent) -> list[str]:
+    """Lines of the page that didn't make it onto the slide (numbering/bullet marks ignored)."""
+    shown = _norm_text(" ".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame))
+    missing = []
+    for line in _expected_lines(content):
+        core = LEADING_NUMBER.sub("", LITERAL_BULLET.sub("", line.strip()))
+        if _norm_text(core) not in shown:
+            missing.append(line)
+    return missing
+
+
+def _delete_slide(prs, slide) -> None:
+    sld_id_lst = prs.slides._sldIdLst
+    for sld_id in list(sld_id_lst):
+        if prs.part.related_part(sld_id.rId) is slide.part:
+            prs.part.drop_rel(sld_id.rId)
+            sld_id_lst.remove(sld_id)
+            return
+
+
+def _render_page(prs, originals, info: SlideInfo | None, kind: str, content: SlideContent,
+                 image: Path | None, label: str, warnings: list[str]):
+    """Clone the sample (or a layout), place the picture, then fill the text."""
+    bullets = list(content.bullets)
+    slot_lines: dict[int, str] = {}
+    if info is not None:
+        slide = clone_slide(prs, originals[info.index])
+        target = Target(
+            slide=slide,
+            title=shape_by_id(slide, info.title_id) if info.title_id is not None else None,
+            body=shape_by_id(slide, info.body_id) if info.body_id is not None else None,
+            picture_els=[
+                shape_by_id(slide, pid)._element
+                for pid in info.picture_ids
+                if shape_by_id(slide, pid) is not None
+            ],
+            info=info,
+        )
+        # Lines whose label matches a labelled box on the sample ("impair (verb): …" ->
+        # the definition banner, "Application task: …" -> its box) go into that box.
+        for sid, key in info.slots.items():
+            idx = next((k for k, b in enumerate(bullets) if slot_key(b) == key), None)
+            if idx is not None and shape_by_id(slide, sid) is not None:
+                slot_lines[sid] = bullets.pop(idx)
+        for sid in info.stale_ids:
+            if sid in slot_lines:
+                continue
+            stale = shape_by_id(slide, sid)
+            if stale is not None:
+                stale._element.getparent().remove(stale._element)
+    else:
+        target = _layout_target(prs, kind)
+        slide = target.slide
+
+    body_lines = bullets
+    if content.kind in ("title", "section") and not body_lines:
+        body_lines = [content.subtitle] if content.subtitle else []
+
+    # ---- picture first: it decides how much room the text has ----------- #
+    alt = f"Image for {label}: {content.title}"
+    if image:
+        biggest = max(
+            target.picture_els,
+            key=lambda e: (_element_box(e) or (0, 0, 0, 0))[2] * (_element_box(e) or (0, 0, 0, 0))[3],
+            default=None,
+        )
+        box = _element_box(biggest) if biggest is not None else None
+        if box and (target.body is not None or not body_lines):
+            # The sample has a picture spot and somewhere for the text: use her layout.
+            _place_picture(slide, box, image, alt, replace_el=biggest)
+        else:
+            # No picture spot (or nowhere for the text): her text slide, picture beside it.
+            for el in target.picture_els:
+                if el.getparent() is not None:
+                    el.getparent().remove(el)
+            _side_image(prs, target, image, alt)
+    else:
+        for el in target.picture_els:
+            if el.getparent() is not None:
+                el.getparent().remove(el)
+
+    # ---- text ------------------------------------------------------------ #
+    if target.title is not None:
+        fill_text(target.title, slide, [content.title or label], True, warnings, f"{label} title")
+    for sid, line in slot_lines.items():
+        fill_text(shape_by_id(slide, sid), slide, [line], False, warnings, f"{label} box")
+    if target.body is not None:
+        if body_lines or not target.body.is_placeholder:
+            fill_text(target.body, slide, body_lines or [""], False, warnings, f"{label} body")
+        else:
+            target.body._element.getparent().remove(target.body._element)
+            target.body = None
+
+    # ---- notes ----------------------------------------------------------- #
+    if content.notes.strip():
+        slide.notes_slide.notes_text_frame.text = content.notes.strip()
+    return slide
+
+
 def build_deck(
     style_path: Path,
     contents: list[SlideContent],
@@ -523,86 +669,39 @@ def build_deck(
         image = image_paths.get(content.page)
         kind = "image" if image else content.kind
 
-        bullets = list(content.bullets)
-        slot_lines: dict[int, str] = {}
-        if infos:
-            info, by_role = pick_exemplar(infos, kind, usage, page_role(content))
-            usage[info.index] += 1
-            if not by_role and info.kind != kind and (kind, info.kind) not in noted:
-                noted.add((kind, info.kind))
-                warnings.append(
-                    f"Your style has no '{kind}' sample slide, so '{info.kind}' samples were used instead. "
-                    f"Add a sample slide like that for better results."
-                )
-            slide = clone_slide(prs, originals[info.index])
-            target = Target(
-                slide=slide,
-                title=shape_by_id(slide, info.title_id) if info.title_id is not None else None,
-                body=shape_by_id(slide, info.body_id) if info.body_id is not None else None,
-                picture_els=[
-                    shape_by_id(slide, pid)._element
-                    for pid in info.picture_ids
-                    if shape_by_id(slide, pid) is not None
-                ],
-                info=info,
+        if not infos:
+            page_warnings: list[str] = []
+            slide = _render_page(prs, originals, None, kind, content, image, label, page_warnings)
+            warnings += page_warnings
+            if missing := missing_text(slide, content):
+                warnings.append(_missing_warning(label, missing))
+            continue
+
+        # Try the best samples in turn until one shows every line of the page.
+        candidates = rank_exemplars(infos, kind, usage, page_role(content), needs_body=bool(content.bullets))
+        attempts = []  # (missing, slide, info, by_role, page_warnings)
+        for info, by_role in candidates[:MAX_ATTEMPTS]:
+            page_warnings = []
+            slide = _render_page(prs, originals, info, kind, content, image, label, page_warnings)
+            missing = missing_text(slide, content)
+            attempts.append((missing, slide, info, by_role, page_warnings))
+            if not missing:
+                break
+        best = min(attempts, key=lambda a: len(a[0]))
+        for attempt in attempts:
+            if attempt is not best:
+                _delete_slide(prs, attempt[1])
+        missing, slide, info, by_role, page_warnings = best
+        usage[info.index] += 1
+        warnings += page_warnings
+        if missing:
+            warnings.append(_missing_warning(label, missing))
+        if not by_role and kind != "image" and info.kind != kind and (kind, info.kind) not in noted:
+            noted.add((kind, info.kind))
+            warnings.append(
+                f"Your style has no '{kind}' sample slide, so '{info.kind}' samples were used instead. "
+                f"Add a sample slide like that for better results."
             )
-            # Lines whose label matches a labelled box on the sample ("impair (verb): …" ->
-            # the definition banner, "Application task: …" -> its box) go into that box.
-            for sid, key in info.slots.items():
-                idx = next((k for k, b in enumerate(bullets) if slot_key(b) == key), None)
-                if idx is not None and shape_by_id(slide, sid) is not None:
-                    slot_lines[sid] = bullets.pop(idx)
-            for sid in info.stale_ids:
-                if sid in slot_lines:
-                    continue
-                stale = shape_by_id(slide, sid)
-                if stale is not None:
-                    stale._element.getparent().remove(stale._element)
-        else:
-            target = _layout_target(prs, kind)
-            slide = target.slide
-
-        # ---- text ------------------------------------------------------- #
-        if target.title is not None:
-            fill_text(target.title, slide, [content.title or label], True, warnings, f"{label} title")
-        else:
-            warnings.append(f"{label}: the chosen sample slide has no title area, so the title was skipped.")
-
-        for sid, line in slot_lines.items():
-            fill_text(shape_by_id(slide, sid), slide, [line], False, warnings, f"{label} box")
-
-        body_lines = bullets
-        if content.kind in ("title", "section") and not body_lines:
-            body_lines = [content.subtitle] if content.subtitle else []
-        if target.body is not None:
-            if body_lines or not target.body.is_placeholder:
-                fill_text(target.body, slide, body_lines or [""], False, warnings, f"{label} body")
-            else:
-                target.body._element.getparent().remove(target.body._element)
-                target.body = None
-        elif body_lines and content.kind == "content":
-            warnings.append(f"{label}: the chosen sample slide has no body area, so the bullet points were skipped.")
-
-        # ---- picture ---------------------------------------------------- #
-        alt = f"Image for {label}: {content.title}"
-        if image:
-            if target.picture_els:
-                biggest = max(target.picture_els, key=lambda e: (_element_box(e) or (0, 0, 0, 0))[2] * (_element_box(e) or (0, 0, 0, 0))[3])
-                box = _element_box(biggest)
-                if box:
-                    _place_picture(slide, box, image, alt, replace_el=biggest)
-                else:
-                    _side_image(prs, target, image, alt)
-            else:
-                _side_image(prs, target, image, alt)
-        else:
-            for el in target.picture_els:
-                if el.getparent() is not None:
-                    el.getparent().remove(el)
-
-        # ---- notes ------------------------------------------------------ #
-        if content.notes.strip():
-            slide.notes_slide.notes_text_frame.text = content.notes.strip()
 
     # Drop the original sample slides, keep only the new ones.
     sld_id_lst = prs.slides._sldIdLst
