@@ -54,10 +54,13 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
-        # Added later: who owns each row (the signed-in teacher; "" when sign-in is off).
-        for table in ("styles", "images", "generations"):
+        # Added later: who owns each row (the signed-in teacher; "" when sign-in is off),
+        # and how many times a generated deck has been rebuilt after edits.
+        added = [(t, "owner TEXT NOT NULL DEFAULT ''") for t in ("styles", "images", "generations")]
+        added.append(("generations", "rev INTEGER NOT NULL DEFAULT 0"))
+        for table, column in added:
             try:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN owner TEXT NOT NULL DEFAULT ''")
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
             except sqlite3.OperationalError:
                 pass  # already there
 

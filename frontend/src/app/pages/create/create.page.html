@@ -231,19 +231,65 @@
       </div>
     }
 
-    @if (r.previews.length) {
-      <div class="previews">
-        @for (src of r.previews; track src; let i = $index) {
+    @if (editError(); as message) {
+      <div class="alert alert-error" role="alert">{{ message }}</div>
+    }
+
+    @if (r.slides.length) {
+      <p class="small muted edit-hint">Click a slide to edit its text, picture or layout. Changes rebuild the deck without using AI.</p>
+      <div class="previews" [class.busy]="rebuilding()">
+        @for (s of r.slides; track $index; let i = $index) {
           <figure>
-            <img [src]="src" [alt]="'Slide ' + (i + 1) + ' preview'" loading="lazy" />
-            <figcaption class="small muted">{{ r.slides[i]?.page ? 'Page ' + r.slides[i].page : '' }}</figcaption>
+            <button type="button" class="slide-btn" (click)="openEditor(i)" [disabled]="rebuilding()"
+                    [attr.aria-label]="'Edit slide ' + (i + 1) + ': ' + s.title">
+              @if (r.previews[i]; as src) {
+                <img [src]="src" [alt]="'Slide ' + (i + 1) + ' preview'" loading="lazy" />
+              } @else if (r.preview_status === 'pending' && stalePreviews()[i]) {
+                <img class="stale" [src]="stalePreviews()[i]" [alt]="'Slide ' + (i + 1) + ', updating'" />
+                <span class="updating small"><span class="spinner"></span> Updating</span>
+              } @else {
+                <span class="text-slide">
+                  <strong>{{ s.title }}</strong>
+                  @for (b of s.bullets.slice(0, 4); track $index) {
+                    <span>{{ b }}</span>
+                  }
+                </span>
+              }
+              <span class="edit-chip">Edit</span>
+            </button>
+            <figcaption class="small muted">Page {{ i + 1 }}</figcaption>
           </figure>
         }
+        @if (rebuilding()) {
+          <div class="rebuild-overlay"><span class="spinner"></span> Rebuilding your deck…</div>
+        }
       </div>
+      @if (r.preview_status === 'pending') {
+        <p class="muted small"><span class="spinner"></span> Rendering previews… you can already download the file.</p>
+      } @else if (r.preview_status === 'unavailable') {
+        <p class="muted small">Previews need LibreOffice installed on the server. The download works without it.</p>
+      }
     } @else if (r.preview_status === 'pending') {
       <p class="muted small"><span class="spinner"></span> Rendering previews… you can already download the file.</p>
     } @else if (r.preview_status === 'unavailable') {
       <p class="muted small">Previews need LibreOffice installed on the server. The download works without it.</p>
+    }
+
+    @let ei = editing();
+    @if (ei !== null && r.slides[ei]) {
+      <app-slide-editor
+        [slide]="r.slides[ei]"
+        [index]="ei"
+        [total]="r.slides.length"
+        [preview]="r.previews[ei] || null"
+        [samples]="samples()"
+        [busy]="rebuilding()"
+        (apply)="applyEdit(ei, $event)"
+        (remove)="deleteSlide(ei)"
+        (move)="moveSlide(ei, $event)"
+        (addAfter)="addSlideAfter(ei)"
+        (close)="closeEditor()"
+      />
     }
 
     <details class="outline">

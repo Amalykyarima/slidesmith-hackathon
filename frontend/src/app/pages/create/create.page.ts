@@ -3,7 +3,8 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
-import { BuildSlide, GenerateRequest, Generation, SlideKind, SlideStyle, UploadedImage } from '../../core/models';
+import { BuildSlide, GenerateRequest, Generation, SlideContent, SlideKind, SlideStyle, StyleSample, UploadedImage } from '../../core/models';
+import { SlideEditor, SlideMove } from './slide-editor';
 
 interface Row {
   key: number;
@@ -34,7 +35,7 @@ const DRAFT_KEY = 'slidesmith.draft.v1';
 
 @Component({
   selector: 'app-create-page',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, SlideEditor],
   templateUrl: './create.page.html',
   styleUrl: './create.page.css',
 })
@@ -60,6 +61,16 @@ export class CreatePage {
   protected readonly generating = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly result = signal<Generation | null>(null);
+
+  // ---- editing the result ----
+  /** Index of the slide open in the editor, or null. */
+  protected readonly editing = signal<number | null>(null);
+  protected readonly samples = signal<StyleSample[] | null>(null);
+  private samplesFor: string | null = null;
+  protected readonly rebuilding = signal(false);
+  protected readonly editError = signal<string | null>(null);
+  /** Previews from before the last rebuild, shown dimmed until the new ones are ready. */
+  protected readonly stalePreviews = signal<string[]>([]);
 
   protected readonly pageProblem = computed(() => {
     const pages = this.rows().map((r) => r.page);
@@ -91,6 +102,7 @@ export class CreatePage {
         topic: this.topic(),
         instructions: this.instructions(),
         exact: this.exact(),
+        resultId: this.result()?.id ?? null,
         rows: this.rows().map(({ page, details, image, role, notes }) => ({ page, details, image, role, notes })),
       };
       try {
@@ -118,6 +130,7 @@ export class CreatePage {
       this.topic.set(d.topic ?? '');
       this.instructions.set(d.instructions ?? '');
       this.exact.set(!!d.exact);
+      if (typeof d.resultId === 'string') void this.restoreResult(d.resultId);
       if (Array.isArray(d.rows) && d.rows.length) {
         this.rows.set(
           d.rows.map((r: Partial<Row>) => ({
@@ -131,6 +144,19 @@ export class CreatePage {
       }
     } catch {
       /* ignore corrupt drafts */
+    }
+  }
+
+  /** Bring back the last deck after a page reload (it may be gone if the server restarted). */
+  private async restoreResult(id: string): Promise<void> {
+    try {
+      const g = await firstValueFrom(this.api.getGeneration(id));
+      if (!this.result()) {
+        this.result.set(g);
+        this.pollPreviews(g.id, 0);
+      }
+    } catch {
+      /* gone: nothing to restore */
     }
   }
 
@@ -294,8 +320,96 @@ export class CreatePage {
     }, 2000);
   }
 
+  // ------------------------------------------------------------ edit result
+  protected openEditor(index: number): void {
+    const r = this.result();
+    if (!r) return;
+    this.editError.set(null);
+    this.editing.set(index);
+    if (this.samplesFor !== r.style_id) {
+      this.samplesFor = r.style_id;
+      this.samples.set(null);
+      firstValueFrom(this.api.styleSamples(r.style_id))
+        .then((list) => this.samples.set(list))
+        .catch(() => this.samples.set([]));
+    }
+  }
+
+  protected closeEditor(): void {
+    this.editing.set(null);
+  }
+
+  protected applyEdit(index: number, slide: SlideContent): void {
+    const slides = [...(this.result()?.slides ?? [])];
+    slides[index] = slide;
+    void this.rebuildWith(slides, null);
+  }
+
+  protected deleteSlide(index: number): void {
+    const slides = (this.result()?.slides ?? []).filter((_, i) => i !== index);
+    if (slides.length) void this.rebuildWith(slides, null);
+  }
+
+  protected moveSlide(index: number, dir: SlideMove): void {
+    const slides = [...(this.result()?.slides ?? [])];
+    const to = index + dir;
+    if (to < 0 || to >= slides.length) return;
+    [slides[index], slides[to]] = [slides[to], slides[index]];
+    void this.rebuildWith(slides, to);
+  }
+
+  protected addSlideAfter(index: number): void {
+    const slides = [...(this.result()?.slides ?? [])];
+    const blank: SlideContent = {
+      page: 0,
+      kind: 'content',
+      title: 'New slide',
+      subtitle: '',
+      bullets: ['Write your first point here'],
+      notes: '',
+      role: '',
+      sample: null,
+      image_id: null,
+    };
+    slides.splice(index + 1, 0, blank);
+    void this.rebuildWith(slides, index + 1);
+  }
+
+  /** Rebuild the deck from these slides (renumbered 1..n). Keeps the editor on `openAt`, or closes it. */
+  private async rebuildWith(slides: SlideContent[], openAt: number | null): Promise<void> {
+    const r = this.result();
+    if (!r || this.rebuilding()) return;
+    this.rebuilding.set(true);
+    this.editError.set(null);
+    clearTimeout(this.pollTimer);
+    const payload: BuildSlide[] = slides.map((s, i) => ({
+      page: i + 1,
+      kind: s.kind,
+      title: s.title,
+      subtitle: s.subtitle ?? '',
+      bullets: s.bullets,
+      notes: s.notes ?? '',
+      role: s.role ?? '',
+      image_id: s.image_id ?? null,
+      sample: s.sample ?? null,
+    }));
+    this.stalePreviews.set(r.previews);
+    try {
+      const fresh = await firstValueFrom(this.api.rebuild(r.id, payload));
+      this.result.set(fresh);
+      this.editing.set(openAt);
+      this.pollPreviews(fresh.id, 0);
+    } catch (err) {
+      this.editError.set(errorMessage(err));
+    } finally {
+      this.rebuilding.set(false);
+    }
+  }
+
   protected newDeck(): void {
     this.result.set(null);
+    this.editing.set(null);
+    this.stalePreviews.set([]);
     this.title.set('');
     this.topic.set('');
     this.instructions.set('');
