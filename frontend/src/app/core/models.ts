@@ -81,6 +81,63 @@ export interface Generation {
   download_url: string;
   preview_status: PreviewStatus;
   previews: string[];
+  rev?: number;
+}
+
+/** One run of text with its look, as the slide editor shows and saves it (sizes in points). */
+export interface SceneRun {
+  text: string;
+  size: number;
+  color: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  font?: string | null;
+}
+
+export interface SceneParagraph {
+  align: 'l' | 'ctr' | 'r' | 'just' | string;
+  level: number;
+  bullet: string | null;
+  runs: SceneRun[];
+}
+
+/** A text box or picture on a slide. Positions and sizes in EMU (914400 per inch). */
+export interface SceneShape {
+  id: number;
+  kind: 'text' | 'picture';
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation: number;
+  /** Its frame is part of the background (style/gradient fill): text editable, not movable. */
+  fixed: boolean;
+  fill?: string | null;
+  border?: { color: string; width: number } | null;
+  anchor?: string;
+  insets?: { l: number; t: number; r: number; b: number };
+  paragraphs?: SceneParagraph[];
+  src?: string;
+}
+
+export interface SlideScene {
+  number: number;
+  count: number;
+  width: number;
+  height: number;
+  background: string | null;
+  rev: number;
+  shapes: SceneShape[];
+}
+
+export interface ShapeEdit {
+  id: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  paragraphs?: { runs: Partial<SceneRun>[] }[];
 }
 
 export interface Health {

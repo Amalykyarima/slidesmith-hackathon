@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { BuildRequest, GenerateRequest, Generation, Health, SlideStyle, UploadedImage } from './models';
+import { BuildRequest, GenerateRequest, Generation, Health, ShapeEdit, SlideScene, SlideStyle, UploadedImage } from './models';
 
 /** All backend calls live here. Paths are relative; `proxy.conf.json` forwards them to FastAPI in dev. */
 @Injectable({ providedIn: 'root' })
@@ -48,6 +48,15 @@ export class ApiService {
   /** Finished content, built word for word without the AI. */
   build(request: BuildRequest): Observable<Generation> {
     return this.http.post<Generation>('/api/build', request);
+  }
+
+  /** A slide as movable pieces for the on-slide editor (number is 1-based). */
+  slideScene(genId: string, number: number): Observable<SlideScene> {
+    return this.http.get<SlideScene>(`/api/generations/${genId}/slides/${number}`);
+  }
+
+  saveSlide(genId: string, number: number, shapes: ShapeEdit[]): Observable<Generation> {
+    return this.http.post<Generation>(`/api/generations/${genId}/slides/${number}`, { shapes });
   }
 
   getGeneration(id: string): Observable<Generation> {

@@ -4,6 +4,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { BuildSlide, GenerateRequest, Generation, SlideKind, SlideStyle, UploadedImage } from '../../core/models';
+import { SlideCanvas } from './slide-canvas';
 
 interface Row {
   key: number;
@@ -34,7 +35,7 @@ const DRAFT_KEY = 'slidesmith.draft.v1';
 
 @Component({
   selector: 'app-create-page',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, SlideCanvas],
   templateUrl: './create.page.html',
   styleUrl: './create.page.css',
 })
@@ -60,6 +61,8 @@ export class CreatePage {
   protected readonly generating = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly result = signal<Generation | null>(null);
+  /** 1-based number of the slide open in the on-slide editor, or null. */
+  protected readonly editingSlide = signal<number | null>(null);
 
   protected readonly pageProblem = computed(() => {
     const pages = this.rows().map((r) => r.page);
@@ -294,8 +297,16 @@ export class CreatePage {
     }, 2000);
   }
 
+  /** The on-slide editor saved: show the new version (previews re-render). */
+  protected slideSaved(gen: Generation): void {
+    clearTimeout(this.pollTimer);
+    this.result.set(gen);
+    this.pollPreviews(gen.id, 0);
+  }
+
   protected newDeck(): void {
     this.result.set(null);
+    this.editingSlide.set(null);
     this.title.set('');
     this.topic.set('');
     this.instructions.set('');
