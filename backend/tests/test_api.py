@@ -1,3 +1,4 @@
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -84,3 +85,45 @@ def test_full_flow():
         # delete style
         assert c.delete(f"/api/styles/{style['id']}").status_code == 204
         assert len(c.get("/api/styles").json()) == 1
+
+
+def test_build_exact_content_without_ai(monkeypatch):
+    """POST /api/build pours finished content into the style word for word, never calling the AI."""
+    from app import ai
+
+    def no_ai(*a, **k):
+        raise AssertionError("the AI must not be called for exact builds")
+
+    monkeypatch.setattr(ai, "generate_content", no_ai)
+    with TestClient(app) as c:
+        style = c.post("/api/styles", files={"file": ("bio.pptx", (FIX / "biology_dark.pptx").read_bytes())}).json()
+        image_id = c.post("/api/images", files={"file": ("cell.png", (FIX / "sample_diagram.png").read_bytes())}).json()["id"]
+        body = {
+            "style_id": style["id"],
+            "title": "Alcohol",
+            "slides": [
+                {"page": 2, "title": "Short-term effects", "bullets": ["Slower reaction times", "Poor judgement and risk-taking"],
+                 "notes": "Ask: why is drink-driving dangerous?"},
+                {"page": 1, "kind": "content", "role": "retrieval", "title": "Alcohol 5th Nov 2026",
+                 "bullets": ["Retrieval Practice:", "What is a drug? (1)", "What is meant by addiction? (1)"]},
+                {"page": 3, "title": "Look at the liver", "bullets": ["Where is it?"], "image_id": image_id},
+            ],
+        }
+        r = c.post("/api/build", json=body)
+        assert r.status_code == 201, r.text
+        gen = r.json()
+        assert gen["mode"] == "exact"
+        assert [s["page"] for s in gen["slides"]] == [1, 2, 3]  # sorted by page
+        assert gen["slides"][0]["bullets"] == ["Retrieval Practice:", "What is a drug? (1)", "What is meant by addiction? (1)"]
+
+        deck = Presentation(io.BytesIO(c.get(gen["download_url"]).content))
+        assert len(deck.slides) == 3
+        text = " ".join(sh.text_frame.text for sh in deck.slides[1].shapes if sh.has_text_frame)
+        assert "Slower reaction times" in text and "Poor judgement and risk-taking" in text
+        assert deck.slides[1].notes_slide.notes_text_frame.text == "Ask: why is drink-driving dangerous?"
+        assert any(sh.shape_type == 13 for sh in deck.slides[2].shapes)  # the attached picture
+
+        dup = c.post("/api/build", json={**body, "slides": [body["slides"][0], {**body["slides"][1], "page": 2}]})
+        assert dup.status_code == 400
+        missing = c.post("/api/build", json={**body, "style_id": "nope"})
+        assert missing.status_code == 404

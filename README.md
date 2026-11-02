@@ -58,3 +58,10 @@ Click **Code → Codespaces → Create codespace on main** on GitHub. The contai
 Node 22, LibreOffice and Claude Code. Then in its terminal: put your key in `backend/.env`, start the
 backend (`cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000`) and,
 in a second terminal, the frontend (`cd frontend && npm run start:cloud`). Run `claude` in a third.
+
+## Slides you've already written
+On the Create page, tick **Use my text exactly (no AI)**: each page's first line becomes the slide title and every
+further line a bullet, built in your style with no AI call. **Import lesson file** loads a JSON lesson such as
+`docs/examples/alcohol_lesson.json` (`{ "title", "slides": [{ "page", "title", "bullets", "role", "notes" }] }`).
+`role` (e.g. `retrieval`, `turn_and_talk`, `we_do`, `you_do`) picks your matching routine slide; it is optional because
+headings like "Turn and Talk" are recognised anyway. The API behind it is `POST /api/build`.

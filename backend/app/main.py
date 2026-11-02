@@ -17,7 +17,7 @@ from . import ai, config, db
 from .generator import build_deck
 from .previews import previews_available, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile, style_roles
-from .schemas import GenerateRequest
+from .schemas import BuildRequest, GenerateRequest, SlideContent
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidesmith")
@@ -224,28 +224,77 @@ def delete_image(image_id: str):
 # --------------------------------------------------------------------------- #
 # Generation
 # --------------------------------------------------------------------------- #
-@app.post("/api/generate", status_code=201)
-def generate(req: GenerateRequest, background: BackgroundTasks):
-    style = db.one("SELECT * FROM styles WHERE id=?", (req.style_id,))
+def _load_style(style_id: str) -> dict:
+    style = db.one("SELECT * FROM styles WHERE id=?", (style_id,))
     if not style:
         raise HTTPException(404, "That style no longer exists. Pick another one.")
+    return style
 
-    pages = [s.page for s in req.slides]
+
+def _check_pages(pages: list[int]) -> None:
     if len(set(pages)) != len(pages):
         raise HTTPException(400, "Each slide needs a different page number.")
     if len(pages) > config.MAX_SLIDES_PER_REQUEST:
         raise HTTPException(400, f"Please keep it to {config.MAX_SLIDES_PER_REQUEST} slides per request.")
 
-    image_paths: dict[int, Path] = {}
-    for spec in req.slides:
+
+def _image_paths(slides) -> dict[int, Path]:
+    paths: dict[int, Path] = {}
+    for spec in slides:
         if spec.image_id:
             row = db.one("SELECT * FROM images WHERE id=?", (spec.image_id,))
             if not row:
                 raise HTTPException(400, f"The image for page {spec.page} was not found. Please upload it again.")
-            image_paths[spec.page] = Path(row["path"])
+            paths[spec.page] = Path(row["path"])
+    return paths
 
-    style_path = Path(style["path"])
-    prs = Presentation(str(style_path))
+
+def _build_and_record(
+    style: dict,
+    title: str,
+    request_dump: dict,
+    contents: list[SlideContent],
+    image_paths: dict[int, Path],
+    mode: str,
+    background: BackgroundTasks,
+) -> dict:
+    """Pour finished slide content into the style, save the deck, start previews."""
+    gen_id = uuid.uuid4().hex[:12]
+    out_path = config.OUTPUTS_DIR / f"{gen_id}.pptx"
+    try:
+        warnings = build_deck(Path(style["path"]), contents, image_paths, out_path, deck_title=title)
+    except Exception:  # noqa: BLE001
+        log.exception("Deck generation failed")
+        out_path.unlink(missing_ok=True)
+        raise HTTPException(500, "Something went wrong while building the slides. Try a different style deck or fewer slides.")
+
+    db.run(
+        "INSERT INTO generations (id, style_id, title, mode, request, slides, warnings, path, preview_status) VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            gen_id,
+            style["id"],
+            title or "Untitled slides",
+            mode,
+            db.dumps(request_dump),
+            db.dumps([c.model_dump() for c in contents]),
+            db.dumps(warnings),
+            str(out_path),
+            "pending" if previews_available() else "unavailable",
+        ),
+    )
+    if previews_available():
+        background.add_task(_render_in_background, "generations", "generations", gen_id, out_path)
+    return _generation_out(db.one("SELECT * FROM generations WHERE id=?", (gen_id,)))
+
+
+@app.post("/api/generate", status_code=201)
+def generate(req: GenerateRequest, background: BackgroundTasks):
+    """Teacher's rough notes -> AI (or demo mode) writes the slides -> deck."""
+    style = _load_style(req.style_id)
+    _check_pages([s.page for s in req.slides])
+    image_paths = _image_paths(req.slides)
+
+    prs = Presentation(str(Path(style["path"])))
     infos = analyze_presentation(prs)
     capacity = {**content_capacity(prs, infos), "roles": style_roles(prs, infos)}
 
@@ -259,32 +308,20 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
         log.exception("Anthropic API error")
         raise HTTPException(502, f"The AI service returned an error: {getattr(exc, 'message', exc)}")
 
-    gen_id = uuid.uuid4().hex[:12]
-    out_path = config.OUTPUTS_DIR / f"{gen_id}.pptx"
-    try:
-        warnings = build_deck(style_path, contents, image_paths, out_path, deck_title=req.title)
-    except Exception:  # noqa: BLE001
-        log.exception("Deck generation failed")
-        out_path.unlink(missing_ok=True)
-        raise HTTPException(500, "Something went wrong while building the slides. Try a different style deck or fewer slides.")
+    return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, mode, background)
 
-    db.run(
-        "INSERT INTO generations (id, style_id, title, mode, request, slides, warnings, path, preview_status) VALUES (?,?,?,?,?,?,?,?,?)",
-        (
-            gen_id,
-            req.style_id,
-            req.title or "Untitled slides",
-            mode,
-            db.dumps(req.model_dump()),
-            db.dumps([c.model_dump() for c in contents]),
-            db.dumps(warnings),
-            str(out_path),
-            "pending" if previews_available() else "unavailable",
-        ),
-    )
-    if previews_available():
-        background.add_task(_render_in_background, "generations", "generations", gen_id, out_path)
-    return _generation_out(db.one("SELECT * FROM generations WHERE id=?", (gen_id,)))
+
+@app.post("/api/build", status_code=201)
+def build_exact(req: BuildRequest, background: BackgroundTasks):
+    """Finished slide content -> deck, word for word. No AI call, no credit used."""
+    style = _load_style(req.style_id)
+    _check_pages([s.page for s in req.slides])
+    image_paths = _image_paths(req.slides)
+    contents = [
+        SlideContent(**s.model_dump(exclude={"image_id"}))
+        for s in sorted(req.slides, key=lambda s: s.page)
+    ]
+    return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, "exact", background)
 
 
 @app.get("/api/generations")
