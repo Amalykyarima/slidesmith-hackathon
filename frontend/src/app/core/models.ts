@@ -51,6 +51,21 @@ export interface SlideContent {
   bullets: string[];
   notes: string;
   role?: string;
+  /** Which sample slide of the style this page is built from (0-based). */
+  sample?: number | null;
+  image_id?: string | null;
+}
+
+/** A sample slide of a style, offered as a layout in the slide editor. */
+export interface StyleSample {
+  index: number;
+  number: number;
+  kind: SlideKind;
+  role: string | null;
+  title: string;
+  has_body: boolean;
+  has_picture: boolean;
+  preview: string | null;
 }
 
 /** A finished slide sent word for word to POST /api/build (no AI). */
@@ -58,10 +73,12 @@ export interface BuildSlide {
   page: number;
   kind: SlideKind;
   title: string;
+  subtitle?: string;
   bullets: string[];
   notes: string;
   role: string;
   image_id: string | null;
+  sample?: number | null;
 }
 
 export interface BuildRequest {
@@ -81,6 +98,7 @@ export interface Generation {
   download_url: string;
   preview_status: PreviewStatus;
   previews: string[];
+  rev?: number;
 }
 
 export interface Health {

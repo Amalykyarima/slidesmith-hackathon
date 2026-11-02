@@ -677,8 +677,12 @@ def build_deck(
                 warnings.append(_missing_warning(label, missing))
             continue
 
-        # Try the best samples in turn until one shows every line of the page.
-        candidates = rank_exemplars(infos, kind, usage, page_role(content), needs_body=bool(content.bullets))
+        # Try the best samples in turn until one shows every line of the page. A layout the
+        # teacher picked in the editor is used as chosen.
+        if content.sample is not None and 0 <= content.sample < len(infos):
+            candidates = [(infos[content.sample], True)]
+        else:
+            candidates = rank_exemplars(infos, kind, usage, page_role(content), needs_body=bool(content.bullets))
         attempts = []  # (missing, slide, info, by_role, page_warnings)
         for info, by_role in candidates[:MAX_ATTEMPTS]:
             page_warnings = []
@@ -693,6 +697,7 @@ def build_deck(
                 _delete_slide(prs, attempt[1])
         missing, slide, info, by_role, page_warnings = best
         usage[info.index] += 1
+        content.sample = info.index  # remembered so the editor can show and change the layout
         warnings += page_warnings
         if missing:
             warnings.append(_missing_warning(label, missing))
