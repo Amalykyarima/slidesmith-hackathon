@@ -49,3 +49,22 @@ def role_of(text: str) -> str | None:
 
 def is_lesson_label(text: str) -> bool:
     return bool(LESSON_LABEL.match(text or ""))
+
+
+# A vocabulary definition: "essential (noun): absolutely necessary", "impair (verb): to weaken…"
+_DEFINITION = re.compile(
+    r"^\s*[A-Za-z][\w'\-]*(\s+[\w'\-]+)?\s*\((noun|verb|adjective|adverb|adj|n|v)\.?\)\s*[:\-]", re.I
+)
+_LABEL = re.compile(r"^\s*([A-Za-z][A-Za-z \-]{1,28}?)\s*:")
+
+
+def slot_key(text: str) -> str | None:
+    """What a labelled box (or line) is for: "definition", or its label such as
+    "application task" or "challenge". None for plain text."""
+    first = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
+    if not first:
+        return None
+    if _DEFINITION.match(first):
+        return "definition"
+    m = _LABEL.match(first)
+    return " ".join(m.group(1).lower().split()) if m else None

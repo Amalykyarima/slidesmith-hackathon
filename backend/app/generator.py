@@ -28,7 +28,7 @@ from .pptx_analysis import (
     resolve_pt,
     shape_by_id,
 )
-from .roles import ROLES, role_of
+from .roles import ROLES, role_of, slot_key
 from .schemas import SlideContent
 
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -180,9 +180,24 @@ def _ensure_spacing(p) -> None:
 
 
 def _estimate_height(lines: list[str], pt: float, width_pt: float) -> float:
-    chars_per_line = max(width_pt / (pt * 0.5), 1)
-    n_lines = sum(max(1, math.ceil(len(line) / chars_per_line)) for line in lines)
-    return n_lines * pt * 1.2 + max(len(lines) - 1, 0) * pt * 0.3
+    # Average glyph ~0.47em in common teaching fonts (Calibri, Gill Sans, Arial is ~0.5).
+    # Wrap word by word rather than by raw character count, so lines aren't overestimated.
+    chars_per_line = max(width_pt / (pt * 0.47), 1)
+    n_lines = sum(_wrapped_lines(line, chars_per_line) for line in lines)
+    return n_lines * pt * 1.15 + max(len(lines) - 1, 0) * pt * 0.25
+
+
+def _wrapped_lines(text: str, chars_per_line: float) -> int:
+    count, current = 1, 0
+    for word in text.split() or [""]:
+        need = len(word) if current == 0 else current + 1 + len(word)
+        if need <= chars_per_line or current == 0:
+            current = need
+        else:
+            count, current = count + 1, len(word)
+        while current > chars_per_line:  # a single word longer than the line
+            count, current = count + 1, current - int(chars_per_line)
+    return count
 
 
 def _fit_pt(shape, lines: list[str], base_pt: float, min_pt: float, indent_pt: float = 0) -> tuple[float, bool]:
@@ -210,6 +225,91 @@ def _apply_size(txbody, pt: float) -> None:
         end = p.find(qn("a:endParaRPr"))
         if end is not None:
             end.set("sz", str(int(pt * 100)))
+
+
+# "Alcohol   5th Nov 2026" / "Alcohol | 5th Nov 2026" / "Alcohol 5th Nov 2026"
+_TITLE_PARTS = re.compile(r"\s{2,}|\s+\|\s+")
+_DATE_TAIL = re.compile(r"^(.*?\S)\s+(\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]{3,9}\.?\s+\d{4})$")
+_GAP = re.compile(r"\s{4,}")
+
+
+def _split_title(text: str) -> tuple[str, str] | None:
+    parts = [p for p in _TITLE_PARTS.split(text.strip()) if p]
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    m = _DATE_TAIL.match(text.strip())
+    return (m.group(1), m.group(2)) if m else None
+
+
+def _fill_gap_title(p, left: str, right: str) -> bool:
+    """Headings laid out as "Topic <spaces> Date" keep that layout: same overall
+    length, so the date stays pushed to the right, and each part keeps its own
+    run formatting (e.g. underlined words but not underlined spaces)."""
+    runs = p.findall(qn("a:r"))
+    texts = [(r.find(qn("a:t")).text or "") if r.find(qn("a:t")) is not None else "" for r in runs]
+    full = "".join(texts)
+    m = re.match(r"^\s*(\S.*?)(\s{4,})(\S.*?)\s*$", full)
+    if not m:
+        return False
+    gap = " " * max(4, len(m.group(1)) + len(m.group(2)) + len(m.group(3)) - len(left) - len(right))
+    for extra in [*p.findall(qn("a:br")), *p.findall(qn("a:fld"))]:
+        p.remove(extra)
+    left_i = next((i for i, t in enumerate(texts) if t.strip()), None)
+    gap_i = next((i for i, t in enumerate(texts) if i > (left_i or 0) and t and not t.strip()), None)
+    right_i = next((i for i, t in enumerate(texts) if gap_i is not None and i > gap_i and t.strip()), None)
+    if left_i is not None and gap_i is not None and right_i is not None:
+        keep = {left_i: left, gap_i: gap, right_i: right}
+        for i, r in enumerate(runs):
+            if i in keep:
+                r.find(qn("a:t")).text = keep[i]
+            else:
+                p.remove(r)
+    else:
+        _set_para_text(p, f"{left}{gap}{right}")
+    for r in p.findall(qn("a:r")):
+        rpr = r.find(qn("a:rPr"))
+        for link in (rpr.findall(qn("a:hlinkClick")) if rpr is not None else []):
+            rpr.remove(link)
+    return True
+
+
+def _stop_above_bars(shape, slide) -> None:
+    """Some teachers' text boxes run behind a footer bar; text placed there is hidden.
+    End the box where a full-width strip covering its lower part begins."""
+    try:
+        slide_w = slide.part.package.presentation_part.presentation.slide_width
+        top, height = shape.top, shape.height
+    except (AttributeError, TypeError):
+        return
+    if top is None or height is None:
+        return
+    for other in slide.shapes:
+        if other.shape_id == shape.shape_id or None in (other.top, other.width, other.height):
+            continue
+        if other.width >= 0.85 * slide_w and top + height / 2 < other.top < top + height:
+            shape.height = other.top - top - Emu(45720)
+
+
+def _grow_into_free_space(shape, slide) -> None:
+    """Long text first uses empty space below its box (down to the next shape or the
+    slide's bottom margin) before the font is shrunk."""
+    try:
+        slide_h = slide.part.package.presentation_part.presentation.slide_height
+        left, top, width, height = shape.left, shape.top, shape.width, shape.height
+    except (AttributeError, TypeError):
+        return
+    if None in (left, top, width, height):
+        return
+    bottom = top + height
+    limit = int(slide_h * 0.94)
+    for other in slide.shapes:
+        if other.shape_id == shape.shape_id or None in (other.left, other.top, other.width, other.height):
+            continue
+        overlaps_x = other.left < left + width and other.left + other.width > left
+        if overlaps_x and other.top >= bottom:
+            limit = min(limit, other.top - Emu(45720))  # leave ~0.05" before the next shape
+    if limit > bottom:
+        shape.height = limit - top
 
 
 def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str], label: str) -> None:
@@ -243,12 +343,20 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
         tx.remove(p)
     for i, line in enumerate(lines):
         p = copy.deepcopy(label_template if i == 0 and label_template is not None else template)
-        _set_para_text(p, prefix + line if line and not LITERAL_BULLET.match(line) else line)
+        parts = _split_title(line) if is_title and len(lines) == 1 else None
+        if parts and _GAP.search(_para_text(p)) and _fill_gap_title(p, *parts):
+            pass
+        else:
+            _set_para_text(p, prefix + line if line and not LITERAL_BULLET.match(line) else line)
         if len(lines) > 1 and not shape.is_placeholder:
             _ensure_spacing(p)
         tx.append(p)
 
     indent = 0 if is_title else 18
+    if not is_title:
+        _stop_above_bars(shape, slide)
+        if not _fit_pt(shape, lines, base_pt, base_pt, indent)[1]:
+            _grow_into_free_space(shape, slide)
     pt, fits = _fit_pt(shape, lines, base_pt, MIN_TITLE_PT if is_title else MIN_BODY_PT, indent)
     if pt < base_pt:
         _apply_size(tx, pt)
@@ -415,6 +523,8 @@ def build_deck(
         image = image_paths.get(content.page)
         kind = "image" if image else content.kind
 
+        bullets = list(content.bullets)
+        slot_lines: dict[int, str] = {}
         if infos:
             info, by_role = pick_exemplar(infos, kind, usage, page_role(content))
             usage[info.index] += 1
@@ -436,7 +546,15 @@ def build_deck(
                 ],
                 info=info,
             )
+            # Lines whose label matches a labelled box on the sample ("impair (verb): …" ->
+            # the definition banner, "Application task: …" -> its box) go into that box.
+            for sid, key in info.slots.items():
+                idx = next((k for k, b in enumerate(bullets) if slot_key(b) == key), None)
+                if idx is not None and shape_by_id(slide, sid) is not None:
+                    slot_lines[sid] = bullets.pop(idx)
             for sid in info.stale_ids:
+                if sid in slot_lines:
+                    continue
                 stale = shape_by_id(slide, sid)
                 if stale is not None:
                     stale._element.getparent().remove(stale._element)
@@ -450,7 +568,10 @@ def build_deck(
         else:
             warnings.append(f"{label}: the chosen sample slide has no title area, so the title was skipped.")
 
-        body_lines = list(content.bullets)
+        for sid, line in slot_lines.items():
+            fill_text(shape_by_id(slide, sid), slide, [line], False, warnings, f"{label} box")
+
+        body_lines = bullets
         if content.kind in ("title", "section") and not body_lines:
             body_lines = [content.subtitle] if content.subtitle else []
         if target.body is not None:
