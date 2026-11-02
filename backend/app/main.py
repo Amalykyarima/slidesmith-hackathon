@@ -19,7 +19,7 @@ from .auth import owner
 from .generator import build_deck
 from .previews import previews_available, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile, style_roles
-from .schemas import BuildRequest, GenerateRequest, RebuildRequest, SlideContent
+from .schemas import BuildRequest, GenerateRequest, SlideContent
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidesmith")
@@ -77,9 +77,7 @@ def _generation_out(row: dict) -> dict:
         "warnings": db.loads(row["warnings"], []),
         "download_url": f"/api/generations/{row['id']}/download",
         "preview_status": row["preview_status"],
-        # ?v= changes on every rebuild, so browsers fetch the new thumbnails.
-        "previews": [f"{u}?v={row.get('rev') or 0}" for u in _preview_urls("generations", row["id"], row["preview_count"])],
-        "rev": row.get("rev") or 0,
+        "previews": _preview_urls("generations", row["id"], row["preview_count"]),
     }
 
 
@@ -357,9 +355,6 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
         log.exception("Anthropic API error")
         raise HTTPException(502, f"The AI service returned an error: {getattr(exc, 'message', exc)}")
 
-    images_by_page = {s.page: s.image_id for s in req.slides}
-    for c in contents:
-        c.image_id = images_by_page.get(c.page)
     return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, mode, background)
 
 
@@ -369,75 +364,11 @@ def build_exact(req: BuildRequest, background: BackgroundTasks):
     style = _load_style(req.style_id)
     _check_pages([s.page for s in req.slides])
     image_paths = _image_paths(req.slides)
-    contents = [SlideContent(**s.model_dump()) for s in sorted(req.slides, key=lambda s: s.page)]
+    contents = [
+        SlideContent(**s.model_dump(exclude={"image_id"}))
+        for s in sorted(req.slides, key=lambda s: s.page)
+    ]
     return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, "exact", background)
-
-
-@app.post("/api/generations/{gen_id}/rebuild")
-def rebuild_generation(gen_id: str, req: RebuildRequest, background: BackgroundTasks):
-    """Rebuild a generated deck after the teacher edited it. No AI call: the text is used as written."""
-    row = db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner()))
-    if not row:
-        raise HTTPException(404, "That deck no longer exists. Generate it again.")
-    style = db.one("SELECT * FROM styles WHERE id=? AND owner=?", (row["style_id"], owner()))
-    if not style:
-        raise HTTPException(404, "The style for this deck is gone (the server may have restarted). Upload it again and rebuild the deck.")
-    _check_pages([s.page for s in req.slides])
-    image_paths = _image_paths(req.slides)
-    contents = [SlideContent(**s.model_dump()) for s in sorted(req.slides, key=lambda s: s.page)]
-    title = row["title"] if req.title is None else (req.title.strip() or "Untitled slides")
-
-    out_path = Path(row["path"])
-    tmp_path = out_path.with_name(f"{out_path.stem}.rebuild.pptx")
-    try:
-        warnings = build_deck(Path(style["path"]), contents, image_paths, tmp_path, deck_title=title)
-    except Exception:  # noqa: BLE001
-        log.exception("Rebuild failed")
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(500, "Something went wrong while rebuilding the slides. Your previous version is unchanged.")
-    tmp_path.replace(out_path)
-
-    db.run(
-        "UPDATE generations SET title=?, slides=?, warnings=?, request=?, rev=rev+1, preview_status=?, preview_count=0 "
-        "WHERE id=? AND owner=?",
-        (
-            title,
-            db.dumps([c.model_dump() for c in contents]),
-            db.dumps(warnings),
-            db.dumps(req.model_dump()),
-            "pending" if previews_available() else "unavailable",
-            gen_id,
-            owner(),
-        ),
-    )
-    if previews_available():
-        background.add_task(_render_in_background, "generations", "generations", gen_id, out_path)
-    return _generation_out(db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner())))
-
-
-@app.get("/api/styles/{style_id}/samples")
-def style_samples(style_id: str):
-    """The style's sample slides, for the editor's layout picker."""
-    style = db.one("SELECT * FROM styles WHERE id=? AND owner=?", (style_id, owner()))
-    if not style:
-        raise HTTPException(404, "Style not found")
-    infos = analyze_presentation(Presentation(str(Path(style["path"]))))
-    out = []
-    for info in infos:
-        if info.complex or info.title_id is None:
-            continue  # can't be refilled safely
-        n = info.index + 1
-        out.append({
-            "index": info.index,
-            "number": n,
-            "kind": info.kind,
-            "role": info.role,
-            "title": info.preview_text,
-            "has_body": info.body_id is not None,
-            "has_picture": bool(info.picture_ids),
-            "preview": f"/files/previews/styles/{style_id}/{n}.jpg" if n <= style["preview_count"] else None,
-        })
-    return out
 
 
 @app.get("/api/generations")

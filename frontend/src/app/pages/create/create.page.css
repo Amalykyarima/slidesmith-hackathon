@@ -45,34 +45,3 @@
 .exact-toggle span { display: flex; flex-direction: column; gap: 2px; }
 .row-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .link-btn { background: none; border: 0; padding: 0; color: var(--primary); cursor: pointer; font: inherit; text-decoration: underline; }
-
-.edit-hint { margin: 4px 0 0; }
-.previews { position: relative; }
-.previews.busy figure { opacity: 0.5; }
-.slide-btn {
-  position: relative; display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer;
-  border-radius: 8px; font: inherit; color: inherit; text-align: left;
-}
-.slide-btn:focus-visible { outline: 3px solid rgba(15, 118, 110, 0.45); outline-offset: 2px; }
-.slide-btn img { transition: box-shadow 0.15s; }
-.slide-btn:hover img, .slide-btn:hover .text-slide { box-shadow: 0 0 0 2px var(--primary); }
-.edit-chip {
-  position: absolute; top: 8px; right: 8px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
-  background: var(--primary); color: #fff; opacity: 0; transition: opacity 0.15s;
-}
-.slide-btn:hover .edit-chip, .slide-btn:focus-visible .edit-chip { opacity: 1; }
-@media (hover: none) { .edit-chip { opacity: 1; } }
-.text-slide {
-  display: flex; flex-direction: column; gap: 4px; aspect-ratio: 16 / 9; padding: 12px; overflow: hidden;
-  background: #fff; border: 1px solid var(--border); border-radius: 8px; font-size: 12px;
-}
-.text-slide strong { font-size: 14px; }
-.rebuild-overlay {
-  position: absolute; inset: 0; display: grid; place-items: center; font-weight: 600;
-  background: rgba(255, 255, 255, 0.55); border-radius: 8px;
-}
-.slide-btn img.stale { opacity: 0.45; filter: grayscale(0.4); }
-.updating {
-  position: absolute; left: 8px; bottom: 8px; display: inline-flex; gap: 6px; align-items: center;
-  padding: 3px 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.92); border: 1px solid var(--border);
-}
