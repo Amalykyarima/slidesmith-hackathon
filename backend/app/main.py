@@ -16,7 +16,7 @@ from pptx import Presentation
 from . import ai, config, db
 from .generator import build_deck
 from .previews import previews_available, render_previews
-from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile
+from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile, style_roles
 from .schemas import GenerateRequest
 
 logging.basicConfig(level=logging.INFO)
@@ -246,7 +246,8 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
 
     style_path = Path(style["path"])
     prs = Presentation(str(style_path))
-    capacity = content_capacity(prs, analyze_presentation(prs))
+    infos = analyze_presentation(prs)
+    capacity = {**content_capacity(prs, infos), "roles": style_roles(prs, infos)}
 
     try:
         contents, mode = ai.generate_content(req, image_paths, capacity)

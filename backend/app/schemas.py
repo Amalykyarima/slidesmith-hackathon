@@ -30,3 +30,5 @@ class SlideContent(BaseModel):
     subtitle: str = ""
     bullets: list[str] = Field(default_factory=list)
     notes: str = ""
+    # Routine slide this page should copy (see roles.py), e.g. "retrieval". Empty = ordinary slide.
+    role: str = ""

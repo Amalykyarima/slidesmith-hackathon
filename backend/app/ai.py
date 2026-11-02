@@ -16,6 +16,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from . import config
+from .roles import ROLES
 from .schemas import GenerateRequest, SlideContent, SlideSpec
 
 log = logging.getLogger("slidesmith.ai")
@@ -27,7 +28,10 @@ You receive the teacher's rough notes for specific slide numbers. Turn each into
 Rules:
 - Return exactly one slide per requested page, using the same page numbers, in the same order.
 - Respect the teacher's notes. If they give exact wording, questions, definitions or numbers, keep them as written. Never invent facts, dates, statistics or quotes that the teacher did not give or that you are not certain about.
-- Be concise. Bullets are short phrases or single sentences, not paragraphs. Obey the max bullets and max words per bullet limits you are given.
+- Keep the teacher's content complete. Every question, task, definition or example the teacher lists becomes its own bullet, kept word for word, including marks such as "(2)". Never merge two questions into one bullet and never drop one, even if that goes over the bullet limit (up to 8 bullets).
+- Tidy rough notes into short bullets: phrases or single sentences, not paragraphs. Stay within the words-per-bullet limit you are given unless that would change the teacher's own wording.
+- Routine slides: the teacher's style contains routine slides (listed in the request), such as a retrieval starter, vocabulary, "Turn and Talk", mini-whiteboard practice or an independent task. When a page is one of these, set "role" to its name and make the title follow the example heading for that role (e.g. if the example heading is a topic and a date, use the new topic and the date the teacher gives). If the role has a label, make that label the first bullet. Leave "role" empty for ordinary teaching slides.
+- Never add prefixes such as "I do:", "We do:" or "You do:" to titles unless the teacher wrote them.
 - Use language suited to the year group / level if the teacher mentions it. Otherwise assume secondary school students.
 - kind: "title" for an opening slide (use title + subtitle, no bullets); "section" for a divider that only needs a heading (+ optional subtitle); "content" for normal teaching slides (title + bullets); "image" is used when an image is attached to that page (title + at most 3 short bullets, because the picture takes up half the slide).
 - If an image is attached, look at it and write text that fits what it actually shows (labels, key points, a question about it). Do not describe the image literally unless the teacher asks.
@@ -53,6 +57,7 @@ TOOL = {
                         "subtitle": {"type": "string"},
                         "bullets": {"type": "array", "items": {"type": "string"}},
                         "notes": {"type": "string"},
+                        "role": {"type": "string", "enum": [*ROLES, ""]},
                     },
                     "required": ["page", "kind", "title"],
                 },
@@ -91,6 +96,14 @@ def _build_user_content(req: GenerateRequest, images: dict[int, Path], capacity:
         f"Limits for this slide style: max {capacity['max_bullets']} bullets per slide, "
         f"max {capacity['max_words_per_bullet']} words per bullet."
     )
+    roles = capacity.get("roles") or {}
+    if roles:
+        lines.append("Routine slides in this teacher's style (role: example heading [label]):")
+        for role, ex in roles.items():
+            if role == "exit":
+                continue
+            label = f' [label: "{ex["label"]}"]' if ex.get("label") else ""
+            lines.append(f'- {role}: "{ex.get("title", "")}"{label}')
     lines.append(f"Create exactly {len(req.slides)} slides:")
 
     blocks: list[dict] = [{"type": "text", "text": "\n".join(lines)}]
@@ -110,7 +123,9 @@ def _build_user_content(req: GenerateRequest, images: dict[int, Path], capacity:
 
 def _clean(content: SlideContent, capacity: dict) -> SlideContent:
     content.title = content.title.strip().rstrip(".")
-    content.bullets = [b.strip() for b in content.bullets if b and b.strip()][: max(capacity["max_bullets"], 3)]
+    content.bullets = [b.strip() for b in content.bullets if b and b.strip()][: max(capacity["max_bullets"], 8)]
+    if content.role not in ROLES:
+        content.role = ""
     return content
 
 

@@ -43,4 +43,33 @@ def test_claude_path(monkeypatch):
     assert [s.page for s in slides] == [1, 2, 3]
     assert slides[0].title == "Cells"  # trailing full stop stripped
     assert slides[1].title == "Mitochondria"  # fallback from teacher's notes
-    assert len(slides[2].bullets) == 5  # capped to the style's capacity
+    # 9 bullets from the model: not cut to the style's estimate (5), only to the hard cap of 8.
+    assert len(slides[2].bullets) == 8
+
+
+def test_routine_roles_reach_the_prompt_and_come_back(monkeypatch):
+    seen = {}
+
+    class RoleMessages:
+        def create(self, **kwargs):
+            seen["text"] = "\n".join(b.get("text", "") for b in kwargs["messages"][0]["content"])
+            seen["system"] = kwargs["system"]
+            block = SimpleNamespace(type="tool_use", input={"slides": [
+                {"page": 1, "kind": "content", "title": "Alcohol 5th Nov 2026", "role": "retrieval",
+                 "bullets": ["Retrieval Practice:", "What is a drug? (1)"]},
+                {"page": 2, "kind": "content", "title": "Short-term effects", "role": "not-a-role"},
+            ]})
+            return SimpleNamespace(content=[block])
+
+    monkeypatch.setattr(config, "AI_ENABLED", True)
+    monkeypatch.setattr(ai.anthropic, "Anthropic", lambda **kw: SimpleNamespace(messages=RoleMessages()))
+    req = GenerateRequest(style_id="x", slides=[{"page": 1, "details": "retrieval"}, {"page": 2, "details": "effects"}])
+    capacity = {"max_bullets": 6, "max_words_per_bullet": 14,
+                "roles": {"retrieval": {"title": "Nutrients 24th Sep 2026", "label": "Retrieval Practice:"},
+                          "exit": {"title": "Lesson Exit Routines", "label": ""}}}
+    slides, _ = ai.generate_content(req, {}, capacity)
+
+    assert '- retrieval: "Nutrients 24th Sep 2026" [label: "Retrieval Practice:"]' in seen["text"]
+    assert "Lesson Exit Routines" not in seen["text"]  # never offered as a page type
+    assert "word for word" in seen["system"]
+    assert slides[0].role == "retrieval" and slides[1].role == ""
