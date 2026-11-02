@@ -189,7 +189,9 @@
     }
   </button>
   @if (generating()) {
-    <span class="muted small">{{ exact() ? 'This takes a few seconds.' : 'This usually takes 10–30 seconds.' }}</span>
+    <span class="muted small progress-note" role="status" aria-live="polite">
+      {{ progressNote() }} <span class="elapsed">{{ elapsed() }}s</span>
+    </span>
   } @else if (!styleId()) {
     <span class="muted small">Choose a style first.</span>
   } @else if (filledRows().length === 0) {
@@ -238,7 +240,11 @@
           <figure>
             <button type="button" class="slide-btn" (click)="editingSlide.set(i + 1)" [attr.aria-label]="'Edit slide ' + (i + 1)">
               <img [src]="src" [alt]="'Slide ' + (i + 1) + ' preview'" loading="lazy" />
-              <span class="edit-chip">Edit</span>
+              @if (r.updating?.includes(i + 1)) {
+                <span class="updating-chip"><span class="spinner"></span> Updating…</span>
+              } @else {
+                <span class="edit-chip">Edit</span>
+              }
             </button>
             <figcaption class="small muted">{{ r.slides[i]?.page ? 'Page ' + r.slides[i].page : '' }}</figcaption>
           </figure>
@@ -251,7 +257,7 @@
     }
 
     @if (editingSlide(); as n) {
-      <app-slide-canvas [generationId]="r.id" [start]="n" (saved)="slideSaved($event)" (close)="editingSlide.set(null)" />
+      <app-slide-canvas [generationId]="r.id" [start]="n" [thumbs]="r.previews" (saved)="slideSaved($event)" (close)="editingSlide.set(null)" />
     }
 
     <details class="outline">

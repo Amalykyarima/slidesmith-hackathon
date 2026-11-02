@@ -252,24 +252,32 @@ def describe_slide(pptx_path: Path, number: int) -> dict:
 # --------------------------------------------------------------------------- #
 # Background: the slide without its editable pieces
 # --------------------------------------------------------------------------- #
-def background_deck(pptx_path: Path, number: int, out_path: Path) -> None:
-    """A one-slide copy of slide `number` with its editable pieces taken out. Text boxes
-    whose frame stays (style/gradient fills) keep the frame; only their text goes."""
+def slides_copy(pptx_path: Path, numbers: list[int], out_path: Path, strip: bool) -> None:
+    """A copy holding only slides `numbers` (1-based, in deck order). With `strip`, each
+    slide's editable pieces are taken out, leaving the background the editor draws on;
+    text boxes whose frame stays (style/gradient fills) keep the frame, only their text goes."""
+    keep = set(numbers)
     prs = Presentation(str(pptx_path))
     ids = prs.slides._sldIdLst
     for i, sld_id in reversed(list(enumerate(list(ids), 1))):
-        if i != number:
+        if i not in keep:
             prs.part.drop_rel(sld_id.rId)
             ids.remove(sld_id)
-    slide = prs.slides[0]
-    theme = _theme_colors(slide)
-    for shape in editable_shapes(slide, prs.slide_width, prs.slide_height):
-        if not _is_picture(shape) and _box_fill(shape, theme)[1]:
-            for t in shape.text_frame._txBody.iter(qn("a:t")):
-                t.text = ""
-        else:
-            shape._element.getparent().remove(shape._element)
+    if strip:
+        for slide in prs.slides:
+            theme = _theme_colors(slide)
+            for shape in editable_shapes(slide, prs.slide_width, prs.slide_height):
+                if not _is_picture(shape) and _box_fill(shape, theme)[1]:
+                    for t in shape.text_frame._txBody.iter(qn("a:t")):
+                        t.text = ""
+                else:
+                    shape._element.getparent().remove(shape._element)
     prs.save(str(out_path))
+
+
+def background_deck(pptx_path: Path, number: int, out_path: Path) -> None:
+    """A one-slide copy of slide `number` with its editable pieces taken out."""
+    slides_copy(pptx_path, [number], out_path, strip=True)
 
 
 def picture_bytes(pptx_path: Path, number: int, shape_id: int) -> tuple[bytes, str]:

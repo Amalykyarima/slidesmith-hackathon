@@ -82,6 +82,8 @@ export interface Generation {
   preview_status: PreviewStatus;
   previews: string[];
   rev?: number;
+  /** Slides whose thumbnails are being redrawn after an edit. */
+  updating?: number[];
 }
 
 /** One run of text with its look, as the slide editor shows and saves it (sizes in points). */
@@ -127,6 +129,8 @@ export interface SlideScene {
   width: number;
   height: number;
   background: string | null;
+  /** The background is still being drawn: fetch it from slideBackground(). */
+  background_pending?: boolean;
   rev: number;
   shapes: SceneShape[];
 }

@@ -16,6 +16,15 @@ import { ApiService, errorMessage } from '../../core/api.service';
 import { Generation, SceneParagraph, SceneRun, SceneShape, ShapeEdit, SlideScene } from '../../core/models';
 
 const EMU_PER_PT = 12700;
+/** Resolves once the browser has the image (so it appears all at once, not in strips). */
+function preload(url: string): Promise<void> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = img.onerror = () => resolve();
+    img.src = url;
+  });
+}
+
 const SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 72];
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
 type Run = Pick<SceneRun, 'text' | 'size' | 'color' | 'bold' | 'italic' | 'underline'>;
@@ -76,16 +85,23 @@ interface Gesture {
         </div>
 
         <div class="actions">
+          @if (!confirmClose()) {
+            <span class="status" [attr.data-state]="saveState()" role="status" aria-live="polite">
+              @switch (saveState()) {
+                @case ('saving') { <span class="spinner"></span> Saving… }
+                @case ('dirty') { <span class="dot" aria-hidden="true"></span> Unsaved changes }
+                @case ('saved') { <span aria-hidden="true">✓</span> All changes saved }
+              }
+            </span>
+          }
           @if (confirmClose()) {
             <span class="small">Discard unsaved changes?</span>
             <button type="button" class="btn btn-sm danger" (click)="close.emit()">Discard</button>
             <button type="button" class="btn btn-sm" (click)="confirmClose.set(false)">Keep editing</button>
           } @else {
-            @if (savedNote()) {
-              <span class="small saved" role="status">Saved</span>
-            }
             <button type="button" class="btn btn-sm" [disabled]="!dirty() || saving()" (click)="reset()">Undo changes</button>
-            <button type="button" class="btn btn-sm btn-primary" [disabled]="!dirty() || saving()" (click)="save()">
+            <button type="button" class="btn btn-sm btn-primary save-btn" [disabled]="!dirty() || saving()" (click)="save()"
+                    title="Save (Ctrl+S)">
               @if (saving()) {
                 <span class="spinner"></span> Saving…
               } @else {
@@ -103,7 +119,12 @@ interface Gesture {
 
       <div class="work" (pointerdown)="backgroundDown($event)">
         @if (!scene()) {
-          <p class="loading muted"><span class="spinner"></span> Opening slide…</p>
+          <div class="stage placeholder" [style.aspect-ratio]="'16 / 9'">
+            @if (thumbs()[number() - 1]; as t) {
+              <img [src]="t" alt="" />
+            }
+            <span class="chip"><span class="spinner"></span> Opening slide {{ number() }}…</span>
+          </div>
         } @else {
           <div
             #stage
@@ -111,7 +132,11 @@ interface Gesture {
             [style.aspect-ratio]="scene()!.width + ' / ' + scene()!.height"
             [style.background-image]="scene()!.background ? 'url(' + scene()!.background + ')' : null"
             [style.--pt]="ptPx() + 'px'"
+            [class.busy]="saving()"
           >
+            @if (!scene()!.background && scene()!.background_pending) {
+              <span class="chip bg-chip"><span class="spinner"></span> Drawing the slide's design… you can start editing</span>
+            }
             @for (p of pieces(); track p.id) {
               <div
                 class="piece"
@@ -158,12 +183,15 @@ interface Gesture {
           <p class="hint small muted">
             Drag a text box or picture to move it · drag a picture's corners to resize · double-click text to edit,
             then select words to format them · arrow keys nudge the selected item.
-            @if (!scene()!.background) {
+            @if (!scene()!.background && !scene()!.background_pending) {
               <br />The slide's background could not be drawn here; the saved slide keeps it.
             }
           </p>
         }
       </div>
+      @if (toast(); as t) {
+        <div class="toast" role="status">{{ t }}</div>
+      }
     </dialog>
   `,
   styles: `
@@ -187,11 +215,34 @@ interface Gesture {
     .fmt.on { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark); }
     .fmt:disabled, .toolbar select:disabled, .toolbar input:disabled { cursor: not-allowed; }
     .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .saved { color: var(--primary-dark); font-weight: 600; }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+    .status:empty { display: none; }
+    .status[data-state='dirty'] { background: #fff4e5; color: #9a5b00; }
+    .status[data-state='saving'] { background: var(--primary-soft); color: var(--primary-dark); }
+    .status[data-state='saved'] { background: #e7f6ec; color: #1e7b3c; }
+    .status .dot { width: 8px; height: 8px; border-radius: 50%; background: #e08a00; }
+    .status .spinner, .chip .spinner { width: 13px; height: 13px; }
+    .save-btn { min-width: 76px; justify-content: center; }
+    .chip {
+      position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 3; display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(255, 255, 255, 0.95); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px;
+      font-size: 13px; color: var(--ink); box-shadow: 0 2px 8px rgba(16, 24, 40, 0.12); white-space: nowrap; pointer-events: none;
+    }
+    .placeholder { overflow: hidden; }
+    .placeholder img { width: 100%; height: 100%; object-fit: contain; display: block; filter: saturate(0.85); opacity: 0.75; }
+    .placeholder .chip { top: 50%; transform: translate(-50%, -50%); }
+    .stage.busy { pointer-events: none; }
+    .stage.busy::after { content: ''; position: absolute; inset: 0; background: rgba(255, 255, 255, 0.35); z-index: 4; }
+    .stage { transition: background-image 0.2s; }
+    .toast {
+      position: fixed; left: 50%; top: 76px; transform: translateX(-50%); z-index: 10; background: #1e7b3c; color: #fff;
+      padding: 10px 16px; border-radius: 10px; font-weight: 600; font-size: 14px; box-shadow: 0 8px 24px rgba(16, 24, 40, 0.25);
+      animation: toast-in 0.18s ease-out;
+    }
+    @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -8px); } }
     .danger { background: var(--danger); border-color: var(--danger); color: #fff; }
     .alert { margin: 10px 16px 0; }
     .work { flex: 1; overflow: auto; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-    .loading { margin-top: 20vh; }
     .stage {
       position: relative; width: min(100%, calc((100vh - 170px) * 16 / 9)); background: #fff center / 100% 100% no-repeat;
       box-shadow: 0 6px 24px rgba(16, 24, 40, 0.18); user-select: none; touch-action: none; overflow: visible;
@@ -226,7 +277,13 @@ interface Gesture {
     .handle.se { right: -8px; bottom: -8px; cursor: nwse-resize; }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
     @media (max-width: 760px) {
-      .bar { padding: 8px 10px; }
+      .bar { padding: 8px 52px 8px 10px; position: relative; gap: 8px; }
+      .actions .btn-icon { position: absolute; right: 8px; top: 8px; }
+      .actions { flex-wrap: nowrap; }
+      .actions .btn { white-space: nowrap; }
+      .status { font-size: 12px; padding: 4px 8px; }
+      .toast { top: auto; bottom: 16px; max-width: calc(100vw - 32px); white-space: nowrap; }
+      .chip { font-size: 12px; white-space: normal; text-align: center; width: max-content; max-width: 90%; }
       .work { padding: 10px; }
       .stage { width: 100%; }
       .handle { width: 20px; height: 20px; }
@@ -245,6 +302,8 @@ export class SlideCanvas {
   readonly generationId = input.required<string>();
   /** 1-based slide number to open first. */
   readonly start = input.required<number>();
+  /** Thumbnails of the deck, shown while a slide opens. */
+  readonly thumbs = input<string[]>([]);
   readonly saved = output<Generation>();
   readonly close = output<void>();
 
@@ -262,7 +321,11 @@ export class SlideCanvas {
   });
   protected readonly saving = signal(false);
   protected readonly error = signal<string | null>(null);
-  protected readonly savedNote = signal(false);
+  protected readonly toast = signal<string | null>(null);
+  private readonly savedOnce = signal(false);
+  protected readonly saveState = computed(() =>
+    this.saving() ? 'saving' : this.dirty() ? 'dirty' : this.savedOnce() ? 'saved' : 'clean',
+  );
   protected readonly confirmClose = signal(false);
   private readonly textDirty = signal<ReadonlySet<number>>(new Set());
   protected readonly dirty = computed(
@@ -307,12 +370,21 @@ export class SlideCanvas {
     });
     const onSelection = () => this.readSelectionFormat();
     document.addEventListener('selectionchange', onSelection);
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault(); // not the browser's "save page"
+        if (this.dirty() && !this.saving()) void this.save();
+      }
+    };
+    window.addEventListener('keydown', onKey);
     const onMove = (e: PointerEvent) => this.pointerMove(e);
     const onUp = () => this.pointerUp();
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     this.destroyRef.onDestroy(() => {
       document.removeEventListener('selectionchange', onSelection);
+      window.removeEventListener('keydown', onKey);
+      clearTimeout(this.toastTimer);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       this.resizeObserver?.disconnect();
@@ -321,20 +393,78 @@ export class SlideCanvas {
 
   // ------------------------------------------------------------------ loading
   private async load(): Promise<void> {
-    this.scene.set(null);
+    const n = this.number();
+    const ready = this.cache.get(n)?.value;
+    if (!ready) this.scene.set(null);
     this.error.set(null);
     this.selectedId.set(null);
     this.editingId.set(null);
     this.textDirty.set(new Set());
     try {
-      const s = await firstValueFrom(this.api.slideScene(this.generationId(), this.number()));
+      const s = ready ?? (await this.fetchScene(n));
+      if (n !== this.number()) return; // moved on while it loaded
       this.scene.set(s);
       this.count.set(s.count);
       this.pieces.set(s.shapes.map((sh) => ({ ...sh, orig: { x: sh.x, y: sh.y, w: sh.w, h: sh.h } })));
       setTimeout(() => this.fillText(), 0);
+      if (!s.background && s.background_pending) void this.fetchBackground(n);
+      this.prefetchAround(n);
     } catch (err) {
-      this.error.set(errorMessage(err));
+      if (n === this.number()) this.error.set(errorMessage(err));
     }
+  }
+
+  /** Slides already fetched (or on their way), so moving between slides is instant. */
+  private readonly cache = new Map<number, { promise: Promise<SlideScene>; value?: SlideScene }>();
+
+  private fetchScene(n: number): Promise<SlideScene> {
+    const hit = this.cache.get(n);
+    if (hit) return hit.promise;
+    const entry: { promise: Promise<SlideScene>; value?: SlideScene } = {
+      promise: firstValueFrom(this.api.slideScene(this.generationId(), n)),
+    };
+    entry.promise.then(
+      (s) => (entry.value = s),
+      () => this.cache.delete(n),
+    );
+    this.cache.set(n, entry);
+    return entry.promise;
+  }
+
+  /** The slide's design is drawn on the server; ask for it, then fade it in. */
+  private async fetchBackground(n: number): Promise<void> {
+    let url: string | null = null;
+    try {
+      url = (await firstValueFrom(this.api.slideBackground(this.generationId(), n))).background;
+      if (url) await preload(url);
+    } catch {
+      url = null;
+    }
+    const patch = (s: SlideScene): SlideScene => ({ ...s, background: url, background_pending: false });
+    const entry = this.cache.get(n);
+    if (entry?.value) entry.value = patch(entry.value);
+    if (this.number() === n) this.scene.update((s) => (s ? patch(s) : s));
+  }
+
+  private prefetchAround(n: number): void {
+    for (const m of [n + 1, n - 1]) {
+      if (m < 1 || m > this.count() || this.cache.has(m)) continue;
+      this.fetchScene(m).then(
+        (s) => {
+          if (s.background) void preload(s.background);
+          else if (s.background_pending) void this.fetchBackground(m);
+          for (const sh of s.shapes) if (sh.src) void preload(sh.src);
+        },
+        () => undefined,
+      );
+    }
+  }
+
+  private toastTimer?: ReturnType<typeof setTimeout>;
+  private showToast(message: string): void {
+    clearTimeout(this.toastTimer);
+    this.toast.set(message);
+    this.toastTimer = setTimeout(() => this.toast.set(null), 2600);
   }
 
   /** Put each text box's formatted text into its element (Angular leaves it alone afterwards). */
@@ -668,9 +798,10 @@ export class SlideCanvas {
         if (el) this.baselines.set(p.id, JSON.stringify(this.serialize(el)));
       }
       this.textDirty.set(new Set());
+      this.cache.delete(this.number());
       this.saved.emit(gen);
-      this.savedNote.set(true);
-      setTimeout(() => this.savedNote.set(false), 2500);
+      this.savedOnce.set(true);
+      this.showToast('Saved — your download is updated');
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
