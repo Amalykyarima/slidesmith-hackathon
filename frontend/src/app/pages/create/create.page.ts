@@ -59,6 +59,17 @@ export class CreatePage {
   protected readonly notice = signal<string | null>(null);
 
   protected readonly generating = signal(false);
+  /** Seconds since Generate was pressed, so a long wait never looks frozen. */
+  protected readonly elapsed = signal(0);
+  private elapsedTimer?: ReturnType<typeof setInterval>;
+  protected readonly progressNote = computed(() => {
+    const t = this.elapsed();
+    if (this.exact()) return t < 6 ? 'Putting your text into the style…' : 'Almost done…';
+    if (t < 4) return 'Sending your notes…';
+    if (t < 35) return 'Writing the text for each slide…';
+    if (t < 60) return 'Putting it into your style…';
+    return 'Still working: long lessons take a little longer.';
+  });
   protected readonly error = signal<string | null>(null);
   protected readonly result = signal<Generation | null>(null);
   /** 1-based number of the slide open in the on-slide editor, or null. */
@@ -255,6 +266,9 @@ export class CreatePage {
     this.error.set(null);
     this.notice.set(null);
     this.generating.set(true);
+    this.elapsed.set(0);
+    clearInterval(this.elapsedTimer);
+    this.elapsedTimer = setInterval(() => this.elapsed.update((t) => t + 1), 1000);
     clearTimeout(this.pollTimer);
 
     const request: GenerateRequest = {
@@ -279,25 +293,30 @@ export class CreatePage {
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
+      clearInterval(this.elapsedTimer);
       this.generating.set(false);
     }
   }
 
   private pollPreviews(id: string, attempt: number): void {
     const current = this.result();
-    if (!current || current.id !== id || current.preview_status !== 'pending' || attempt > 45) return;
+    const busy = current?.preview_status === 'pending' || !!current?.updating?.length;
+    if (!current || current.id !== id || !busy || attempt > 90) return;
     this.pollTimer = setTimeout(async () => {
       try {
         const fresh = await firstValueFrom(this.api.getGeneration(id));
+        // Load changed thumbnails first, so the old picture stays until the new one is ready.
+        const old = new Set(this.result()?.previews ?? []);
+        await Promise.all(fresh.previews.filter((u) => !old.has(u)).map(preloadImage));
         if (this.result()?.id === id) this.result.set(fresh);
       } catch {
         /* keep trying quietly */
       }
       this.pollPreviews(id, attempt + 1);
-    }, 2000);
+    }, attempt < 10 ? 1500 : 3000);
   }
 
-  /** The on-slide editor saved: show the new version (previews re-render). */
+  /** The on-slide editor saved: that slide's thumbnail is redrawn on the server. */
   protected slideSaved(gen: Generation): void {
     clearTimeout(this.pollTimer);
     this.result.set(gen);
@@ -332,4 +351,12 @@ export class CreatePage {
   }
 
   protected selectedStyle = computed(() => this.styles().find((s) => s.id === this.styleId()) ?? null);
+}
+
+function preloadImage(url: string): Promise<void> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = img.onerror = () => resolve();
+    img.src = url;
+  });
 }

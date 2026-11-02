@@ -55,6 +55,10 @@ export class ApiService {
     return this.http.get<SlideScene>(`/api/generations/${genId}/slides/${number}`);
   }
 
+  slideBackground(genId: string, number: number): Observable<{ background: string | null }> {
+    return this.http.get<{ background: string | null }>(`/api/generations/${genId}/slides/${number}/background`);
+  }
+
   saveSlide(genId: string, number: number, shapes: ShapeEdit[]): Observable<Generation> {
     return this.http.post<Generation>(`/api/generations/${genId}/slides/${number}`, { shapes });
   }

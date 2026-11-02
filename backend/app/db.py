@@ -58,6 +58,7 @@ def init_db() -> None:
         # and how many times a deck has been edited (so browsers fetch fresh previews).
         added = [(t, "owner TEXT NOT NULL DEFAULT ''") for t in ("styles", "images", "generations")]
         added.append(("generations", "rev INTEGER NOT NULL DEFAULT 0"))
+        added.append(("generations", "slide_revs TEXT NOT NULL DEFAULT '{}'"))  # per-slide thumbnail versions
         for table, column in added:
             try:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")

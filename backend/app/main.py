@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 import re
 import shutil
@@ -17,7 +18,7 @@ from pptx import Presentation
 from . import ai, auth, config, db
 from .auth import owner
 from .generator import build_deck
-from .previews import previews_available, render_previews
+from .previews import previews_available, render_into, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile, style_roles
 from .schemas import BuildRequest, GenerateRequest, SlideContent, SlideEdits
 from . import scene
@@ -67,7 +68,25 @@ def _style_out(row: dict) -> dict:
     }
 
 
+# Slides whose thumbnails are being redrawn after an edit (one server process, so memory is fine).
+_updating: dict[str, set[int]] = {}
+_state_lock = threading.Lock()
+# One lock per deck, shared by the "all editor backgrounds" pass and single-slide renders,
+# so a background is never drawn twice at the same time.
+_bg_locks: dict[str, threading.Lock] = {}
+
+
+def _bg_lock(gen_id: str) -> threading.Lock:
+    with _state_lock:
+        return _bg_locks.setdefault(gen_id, threading.Lock())
+
+
+def _bg_file(gen_id: str, number: int) -> Path:
+    return config.PREVIEWS_DIR / "generations" / gen_id / "bg" / str(number) / "1.jpg"
+
+
 def _generation_out(row: dict) -> dict:
+    revs = db.loads(row.get("slide_revs") or "{}", {})
     return {
         "id": row["id"],
         "title": row["title"],
@@ -78,8 +97,11 @@ def _generation_out(row: dict) -> dict:
         "warnings": db.loads(row["warnings"], []),
         "download_url": f"/api/generations/{row['id']}/download",
         "preview_status": row["preview_status"],
-        # ?v= changes after every edit, so browsers fetch the new thumbnails.
-        "previews": [f"{u}?v={row.get('rev') or 0}" for u in _preview_urls("generations", row["id"], row["preview_count"])],
+        # ?v= changes when that slide's thumbnail is redrawn after an edit, so the
+        # browser fetches just that one again.
+        "previews": [f"{u}?v={revs.get(str(n), 0)}" for n, u in
+                     enumerate(_preview_urls("generations", row["id"], row["preview_count"]), 1)],
+        "updating": sorted(_updating.get(row["id"], ())),  # slides whose thumbnail is being redrawn
         "rev": row.get("rev") or 0,
     }
 
@@ -97,6 +119,54 @@ def _render_in_background(table: str, kind: str, entity_id: str, pptx_path: Path
     except Exception:  # noqa: BLE001
         log.exception("Preview rendering failed for %s %s", kind, entity_id)
         db.run(f"UPDATE {table} SET preview_status='failed' WHERE id=?", (entity_id,))
+
+
+def _render_backgrounds(gen_id: str, pptx_path: Path, numbers: list[int]) -> None:
+    """Editor backgrounds for many slides in one LibreOffice run (starting LibreOffice is
+    most of the cost), so opening a slide in the editor is instant."""
+    import tempfile
+
+    with _bg_lock(gen_id):
+        todo = [n for n in numbers if not _bg_file(gen_id, n).exists()]
+        if not todo:
+            return
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                deck = Path(tmp) / "backgrounds.pptx"
+                scene.slides_copy(pptx_path, todo, deck, strip=True)
+                render_into(deck, [_bg_file(gen_id, n) for n in todo], width_px=1280)
+        except Exception:  # noqa: BLE001
+            log.exception("Editor backgrounds failed for %s", gen_id)
+
+
+def _render_generation(gen_id: str, pptx_path: Path) -> None:
+    """Thumbnails first (the teacher is waiting for them), then the editor backgrounds."""
+    _render_in_background("generations", "generations", gen_id, pptx_path)
+    row = db.one("SELECT preview_count FROM generations WHERE id=?", (gen_id,))
+    if row and row["preview_count"]:
+        _render_backgrounds(gen_id, pptx_path, list(range(1, row["preview_count"] + 1)))
+
+
+def _redraw_slide(gen_id: str, pptx_path: Path, number: int) -> None:
+    """After an edit: redraw only that slide's thumbnail, then publish its new version."""
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            one = Path(tmp) / "slide.pptx"
+            scene.slides_copy(pptx_path, [number], one, strip=False)
+            render_into(one, [config.PREVIEWS_DIR / "generations" / gen_id / f"{number}.jpg"], width_px=640)
+        with _state_lock:
+            row = db.one("SELECT slide_revs FROM generations WHERE id=?", (gen_id,))
+            if row:
+                revs = db.loads(row["slide_revs"] or "{}", {})
+                revs[str(number)] = revs.get(str(number), 0) + 1
+                db.run("UPDATE generations SET slide_revs=? WHERE id=?", (db.dumps(revs), gen_id))
+    except Exception:  # noqa: BLE001
+        log.exception("Redrawing slide %s of %s failed", number, gen_id)
+    finally:
+        with _state_lock:
+            _updating.get(gen_id, set()).discard(number)
 
 
 # --------------------------------------------------------------------------- #
@@ -321,7 +391,7 @@ def _build_and_record(
         ),
     )
     if previews_available():
-        background.add_task(_render_in_background, "generations", "generations", gen_id, out_path)
+        background.add_task(_render_generation, gen_id, out_path)
     return _generation_out(db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner())))
 
 
@@ -394,27 +464,24 @@ def slide_scene(gen_id: str, number: int):
     except IndexError:
         raise HTTPException(404, "That slide doesn't exist.")
     rev = row.get("rev") or 0
-    background = None
-    if previews_available():
-        # Edits only ever change the editable pieces, never the background, so one
-        # render per slide serves every later edit.
-        bg_dir = config.PREVIEWS_DIR / "generations" / gen_id / "bg" / str(number)
-        if not (bg_dir / "1.jpg").exists():
-            import tempfile
-
-            with tempfile.TemporaryDirectory() as tmp:
-                bg_deck = Path(tmp) / "background.pptx"
-                scene.background_deck(path, number, bg_deck)
-                try:
-                    render_previews(bg_deck, bg_dir, max_pages=1, width_px=1280)
-                except Exception:  # noqa: BLE001
-                    log.exception("Background render failed for %s slide %s", gen_id, number)
-        if (bg_dir / "1.jpg").exists():
-            background = f"/files/previews/generations/{gen_id}/bg/{number}/1.jpg"
+    # The background picture comes from its own endpoint so the slide opens straight away.
+    background = f"/files/previews/generations/{gen_id}/bg/{number}/1.jpg" if _bg_file(gen_id, number).exists() else None
     for shape in model["shapes"]:
         if shape["kind"] == "picture":
             shape["src"] = f"/api/generations/{gen_id}/slides/{number}/pictures/{shape['id']}?v={rev}"
-    return {**model, "background": background, "rev": rev}
+    return {**model, "background": background, "background_pending": background is None and previews_available(), "rev": rev}
+
+
+@app.get("/api/generations/{gen_id}/slides/{number}/background")
+def slide_background(gen_id: str, number: int):
+    """Waits until slide `number`'s editor background exists (drawing it if needed)."""
+    row = _own_generation(gen_id)
+    if number < 1:
+        raise HTTPException(404, "That slide doesn't exist.")
+    if previews_available() and not _bg_file(gen_id, number).exists():
+        _render_backgrounds(gen_id, Path(row["path"]), [number])
+    url = f"/files/previews/generations/{gen_id}/bg/{number}/1.jpg" if _bg_file(gen_id, number).exists() else None
+    return {"background": url}
 
 
 @app.get("/api/generations/{gen_id}/slides/{number}/pictures/{shape_id}")
@@ -444,12 +511,11 @@ def edit_slide(gen_id: str, number: int, edits: SlideEdits, background: Backgrou
         work.unlink(missing_ok=True)
         raise HTTPException(500, "Something went wrong while saving. Your slide is unchanged.")
     work.replace(path)
-    db.run(
-        "UPDATE generations SET rev=rev+1, preview_status=?, preview_count=0 WHERE id=? AND owner=?",
-        ("pending" if previews_available() else "unavailable", gen_id, owner()),
-    )
-    if previews_available():
-        background.add_task(_render_in_background, "generations", "generations", gen_id, path)
+    db.run("UPDATE generations SET rev=rev+1 WHERE id=? AND owner=?", (gen_id, owner()))
+    if previews_available() and number <= (row["preview_count"] or 0):
+        with _state_lock:
+            _updating.setdefault(gen_id, set()).add(number)
+        background.add_task(_redraw_slide, gen_id, path, number)
     return _generation_out(db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner())))
 
 

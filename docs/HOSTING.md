@@ -25,6 +25,20 @@ One Docker service serves the API and the Angular app at one address, with HTTPS
 
 Every merge to `main` deploys automatically.
 
+## Keep it awake during school hours (free, recommended)
+
+The free server sleeps after 15 minutes without visitors; the next visit waits about a minute while
+it wakes, and the disk is wiped. A free pinger visiting every 10 minutes during the school day stops
+both. Render gives 750 free hours a month; weekdays 06:00–18:00 use about 270.
+
+1. Sign up at https://cron-job.org (free, no card).
+2. **Create cronjob** → URL `https://<your-app>.onrender.com/api/health` (this page needs no sign-in).
+3. Schedule: **Custom** → every 10 minutes, hours 6–18, Monday–Friday, time zone Europe/London.
+4. Save. In Render → **Logs** you will see a `GET /api/health` every 10 minutes.
+
+GitHub Actions can ping too, but on a private repo each ping uses a minute of the 2,000 free Actions
+minutes a month, so an outside pinger is the better fit.
+
 ## Settings (Render → the service → Environment)
 | Setting | What it does | Default in render.yaml |
 | --- | --- | --- |

@@ -110,8 +110,9 @@ def test_editing_api(monkeypatch):
 
         s = c.get(f"/api/generations/{gen['id']}/slides/2").json()
         assert s["number"] == 2 and s["count"] == 2
-        if s["background"]:  # drawn when LibreOffice is installed
-            bg = c.get(s["background"])
+        url = s["background"] or c.get(f"/api/generations/{gen['id']}/slides/2/background").json()["background"]
+        if url:  # drawn when LibreOffice is installed
+            bg = c.get(url)
             assert bg.status_code == 200 and bg.headers["content-type"] == "image/jpeg"
         pictures = [x for x in s["shapes"] if x["kind"] == "picture"]
         texts = [x for x in s["shapes"] if x["kind"] == "text"]
@@ -126,7 +127,11 @@ def test_editing_api(monkeypatch):
         ]})
         assert r.status_code == 200, r.text
         new = r.json()
-        assert new["rev"] == 1 and all(u.endswith("?v=1") for u in new["previews"])
+        assert new["rev"] == 1
+        after = c.get(f"/api/generations/{gen['id']}").json()
+        if after["previews"]:  # only the edited slide's thumbnail is redrawn
+            assert after["previews"][0].endswith("?v=0") and after["previews"][1].endswith("?v=1")
+            assert after["updating"] == [] and after["preview_status"] == "ready"
         deck = Presentation(io.BytesIO(c.get(new["download_url"]).content))
         moved = {sh.shape_id: sh for sh in deck.slides[1].shapes}
         assert moved[title["id"]].left == title["x"] + 500000

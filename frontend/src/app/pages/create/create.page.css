@@ -56,3 +56,10 @@
 }
 .slide-btn:hover .edit-chip, .slide-btn:focus-visible .edit-chip { opacity: 1; }
 @media (hover: none) { .edit-chip { opacity: 1; } }
+.updating-chip {
+  position: absolute; top: 6px; right: 6px; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+  border-radius: 999px; font-size: 11px; font-weight: 600; background: rgba(255, 255, 255, 0.95); color: var(--primary-dark);
+  border: 1px solid var(--border); box-shadow: 0 1px 4px rgba(16, 24, 40, 0.12);
+}
+.updating-chip .spinner { width: 11px; height: 11px; }
+.progress-note .elapsed { font-variant-numeric: tabular-nums; opacity: 0.7; margin-left: 4px; }
