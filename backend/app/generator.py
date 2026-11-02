@@ -28,11 +28,14 @@ from .pptx_analysis import (
     resolve_pt,
     shape_by_id,
 )
+from .roles import ROLES, role_of
 from .schemas import SlideContent
 
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 SHAPE_TAGS = {qn("p:sp"), qn("p:pic"), qn("p:grpSp"), qn("p:graphicFrame"), qn("p:cxnSp")}
 SECTION_EXT_URI = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"
+
+LEADING_NUMBER = re.compile(r"^\s*\d{1,2}[.)]\s+")
 
 # Some teachers type their bullets as characters ("• Point"). Keep that habit.
 LITERAL_BULLET = re.compile(r"^\s*([\u2022\u25aa\u25e6\u25cf\u2023\-\u2013\u2014*]\s+)")
@@ -129,10 +132,35 @@ def _set_para_text(p, text: str) -> None:
         else:
             p.append(first)
         etree.SubElement(first, qn("a:t"))
+    rpr = first.find(qn("a:rPr"))
+    if rpr is not None:
+        # Links in the sample point at the old lesson's resources.
+        for link in rpr.findall(qn("a:hlinkClick")):
+            rpr.remove(link)
     t = first.find(qn("a:t"))
     if t is None:
         t = etree.SubElement(first, qn("a:t"))
     t.text = text
+
+
+_AFTER_BULLET = (qn("a:tabLst"), qn("a:defRPr"), qn("a:extLst"))
+
+
+def _set_no_bullet(p) -> None:
+    """Explicit <a:buNone/>, placed where the schema expects it (before tabLst/defRPr)."""
+    ppr = p.find(qn("a:pPr"))
+    if ppr is None:
+        ppr = etree.Element(qn("a:pPr"))
+        p.insert(0, ppr)
+    for tag in ("a:buNone", "a:buAutoNum", "a:buChar", "a:buBlip"):
+        for el in ppr.findall(qn(tag)):
+            ppr.remove(el)
+    none = etree.Element(qn("a:buNone"))
+    anchor = next((c for c in ppr if c.tag in _AFTER_BULLET), None)
+    if anchor is not None:
+        anchor.addprevious(none)
+    else:
+        ppr.append(none)
 
 
 def _ensure_spacing(p) -> None:
@@ -195,11 +223,26 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
     base_pt = resolve_pt(shape, slide, is_title)
     match = None if is_title else LITERAL_BULLET.match(_para_text(template))
     prefix = match.group(1) if match else ""
+    ppr = template.find(qn("a:pPr"))
+    auto_numbered = ppr is not None and ppr.find(qn("a:buAutoNum")) is not None
+    if is_title:
+        # A heading never keeps list numbering from the sample or its layout ("1. Turn and Talk").
+        _set_no_bullet(template)
+    if auto_numbered and not is_title:
+        # PowerPoint already numbers these lines; typed numbers would show twice ("1. 1.").
+        lines = [LEADING_NUMBER.sub("", ln) for ln in lines]
+
+    # A label line that the sample also starts with ("Retrieval Practice:") keeps the
+    # sample's own formatting for it, e.g. unnumbered above a numbered list.
+    first = paras[0] if paras else None
+    label_template = None
+    if not is_title and first is not None and lines and _para_text(first).strip().lower() == lines[0].lower():
+        label_template = copy.deepcopy(first)
 
     for p in paras:
         tx.remove(p)
-    for line in lines:
-        p = copy.deepcopy(template)
+    for i, line in enumerate(lines):
+        p = copy.deepcopy(label_template if i == 0 and label_template is not None else template)
         _set_para_text(p, prefix + line if line and not LITERAL_BULLET.match(line) else line)
         if len(lines) > 1 and not shape.is_placeholder:
             _ensure_spacing(p)
@@ -274,14 +317,44 @@ def _side_image(prs, target: Target, image_path: Path, alt: str) -> None:
 # --------------------------------------------------------------------------- #
 # Choosing a sample slide
 # --------------------------------------------------------------------------- #
-def pick_exemplar(infos: list[SlideInfo], kind: str, usage: Counter) -> SlideInfo:
-    for wanted in FALLBACKS[kind]:
-        pool = [i for i in infos if i.kind == wanted]
-        simple = [i for i in pool if not i.complex]
-        pool = simple or pool
+def page_role(content: SlideContent) -> str | None:
+    """Which routine slide a page is: the AI says so, or its heading / first line does."""
+    if content.role in ROLES:
+        return content.role
+    return role_of(content.title) or (role_of(content.bullets[0]) if content.bullets else None)
+
+
+def pick_exemplar(
+    infos: list[SlideInfo], kind: str, usage: Counter, role: str | None = None
+) -> tuple[SlideInfo, bool]:
+    """Best sample slide for a page. Returns (sample, matched_by_role).
+
+    A page with a routine role ("Turn and Talk", "Retrieval Practice"...) uses a sample
+    with the same role. Ordinary teaching pages use ordinary or "I do" samples, never
+    another routine's slide. Cleaner samples (less sample content to strip) win, then
+    the least-used one so repeated pages vary.
+    """
+    order = FALLBACKS[kind]
+    usable = [i for i in infos if not i.complex and i.title_id is not None] or [
+        i for i in infos if not i.complex
+    ] or infos
+
+    def rank(i: SlideInfo):
+        kind_rank = order.index(i.kind) if i.kind in order else len(order)
+        return (i.clutter, kind_rank, usage[i.index], i.index)
+
+    if role:
+        pool = [i for i in usable if i.role == role]
         if pool:
-            return sorted(pool, key=lambda i: (usage[i.index], i.index))[0]
-    return infos[0]
+            return min(pool, key=rank), True
+
+    for allowed in ({None, "i_do"}, set(ROLES) - {"exit"} | {None}):
+        candidates = [i for i in usable if i.role in allowed]
+        for wanted in order:
+            pool = [i for i in candidates if i.kind == wanted]
+            if pool:
+                return min(pool, key=lambda i: (i.clutter, usage[i.index], i.index)), False
+    return infos[0], False
 
 
 def _layout_target(prs, kind: str) -> Target:
@@ -343,9 +416,9 @@ def build_deck(
         kind = "image" if image else content.kind
 
         if infos:
-            info = pick_exemplar(infos, kind, usage)
+            info, by_role = pick_exemplar(infos, kind, usage, page_role(content))
             usage[info.index] += 1
-            if info.kind != kind and (kind, info.kind) not in noted:
+            if not by_role and info.kind != kind and (kind, info.kind) not in noted:
                 noted.add((kind, info.kind))
                 warnings.append(
                     f"Your style has no '{kind}' sample slide, so '{info.kind}' samples were used instead. "
