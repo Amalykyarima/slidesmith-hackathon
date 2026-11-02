@@ -232,10 +232,14 @@
     }
 
     @if (r.previews.length) {
+      <p class="small muted edit-hint">Click a slide to edit it: move text and pictures, resize pictures, format text.</p>
       <div class="previews">
         @for (src of r.previews; track src; let i = $index) {
           <figure>
-            <img [src]="src" [alt]="'Slide ' + (i + 1) + ' preview'" loading="lazy" />
+            <button type="button" class="slide-btn" (click)="editingSlide.set(i + 1)" [attr.aria-label]="'Edit slide ' + (i + 1)">
+              <img [src]="src" [alt]="'Slide ' + (i + 1) + ' preview'" loading="lazy" />
+              <span class="edit-chip">Edit</span>
+            </button>
             <figcaption class="small muted">{{ r.slides[i]?.page ? 'Page ' + r.slides[i].page : '' }}</figcaption>
           </figure>
         }
@@ -244,6 +248,10 @@
       <p class="muted small"><span class="spinner"></span> Rendering previews… you can already download the file.</p>
     } @else if (r.preview_status === 'unavailable') {
       <p class="muted small">Previews need LibreOffice installed on the server. The download works without it.</p>
+    }
+
+    @if (editingSlide(); as n) {
+      <app-slide-canvas [generationId]="r.id" [start]="n" (saved)="slideSaved($event)" (close)="editingSlide.set(null)" />
     }
 
     <details class="outline">

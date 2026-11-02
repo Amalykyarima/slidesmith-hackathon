@@ -45,6 +45,34 @@ class BuildSlide(SlideContent):
     image_id: str | None = None
 
 
+class TextRun(BaseModel):
+    text: str = Field(default="", max_length=5000)
+    size: float | None = None
+    color: str | None = None
+    bold: bool | None = None
+    italic: bool | None = None
+    underline: bool | None = None
+
+
+class EditParagraph(BaseModel):
+    runs: list[TextRun] = Field(default_factory=list, max_length=200)
+
+
+class ShapeEdit(BaseModel):
+    """One text box or picture the teacher moved, resized or re-formatted (EMU, points)."""
+
+    id: int
+    x: int | None = None
+    y: int | None = None
+    w: int | None = None
+    h: int | None = None
+    paragraphs: list[EditParagraph] | None = Field(default=None, max_length=200)
+
+
+class SlideEdits(BaseModel):
+    shapes: list[ShapeEdit] = Field(default_factory=list, max_length=200)
+
+
 class BuildRequest(BaseModel):
     """Build a deck from finished content, word for word, without the AI."""
 

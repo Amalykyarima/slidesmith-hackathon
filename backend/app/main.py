@@ -19,7 +19,8 @@ from .auth import owner
 from .generator import build_deck
 from .previews import previews_available, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile, style_roles
-from .schemas import BuildRequest, GenerateRequest, SlideContent
+from .schemas import BuildRequest, GenerateRequest, SlideContent, SlideEdits
+from . import scene
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidesmith")
@@ -77,7 +78,9 @@ def _generation_out(row: dict) -> dict:
         "warnings": db.loads(row["warnings"], []),
         "download_url": f"/api/generations/{row['id']}/download",
         "preview_status": row["preview_status"],
-        "previews": _preview_urls("generations", row["id"], row["preview_count"]),
+        # ?v= changes after every edit, so browsers fetch the new thumbnails.
+        "previews": [f"{u}?v={row.get('rev') or 0}" for u in _preview_urls("generations", row["id"], row["preview_count"])],
+        "rev": row.get("rev") or 0,
     }
 
 
@@ -369,6 +372,85 @@ def build_exact(req: BuildRequest, background: BackgroundTasks):
         for s in sorted(req.slides, key=lambda s: s.page)
     ]
     return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, "exact", background)
+
+
+# --------------------------------------------------------------------------- #
+# On-slide editing
+# --------------------------------------------------------------------------- #
+def _own_generation(gen_id: str) -> dict:
+    row = db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner()))
+    if not row or not Path(row["path"]).exists():
+        raise HTTPException(404, "That deck no longer exists (the server may have restarted). Generate it again.")
+    return row
+
+
+@app.get("/api/generations/{gen_id}/slides/{number}")
+def slide_scene(gen_id: str, number: int):
+    """Slide `number` as editable pieces, plus a picture of everything else on it."""
+    row = _own_generation(gen_id)
+    path = Path(row["path"])
+    try:
+        model = scene.describe_slide(path, number)
+    except IndexError:
+        raise HTTPException(404, "That slide doesn't exist.")
+    rev = row.get("rev") or 0
+    background = None
+    if previews_available():
+        # Edits only ever change the editable pieces, never the background, so one
+        # render per slide serves every later edit.
+        bg_dir = config.PREVIEWS_DIR / "generations" / gen_id / "bg" / str(number)
+        if not (bg_dir / "1.jpg").exists():
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmp:
+                bg_deck = Path(tmp) / "background.pptx"
+                scene.background_deck(path, number, bg_deck)
+                try:
+                    render_previews(bg_deck, bg_dir, max_pages=1, width_px=1280)
+                except Exception:  # noqa: BLE001
+                    log.exception("Background render failed for %s slide %s", gen_id, number)
+        if (bg_dir / "1.jpg").exists():
+            background = f"/files/previews/generations/{gen_id}/bg/{number}/1.jpg"
+    for shape in model["shapes"]:
+        if shape["kind"] == "picture":
+            shape["src"] = f"/api/generations/{gen_id}/slides/{number}/pictures/{shape['id']}?v={rev}"
+    return {**model, "background": background, "rev": rev}
+
+
+@app.get("/api/generations/{gen_id}/slides/{number}/pictures/{shape_id}")
+def slide_picture(gen_id: str, number: int, shape_id: int):
+    row = _own_generation(gen_id)
+    try:
+        data, mime = scene.picture_bytes(Path(row["path"]), number, shape_id)
+    except (IndexError, KeyError):
+        raise HTTPException(404, "Picture not found")
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/api/generations/{gen_id}/slides/{number}")
+def edit_slide(gen_id: str, number: int, edits: SlideEdits, background: BackgroundTasks):
+    """Save moves, resizes and text formatting made on the slide."""
+    row = _own_generation(gen_id)
+    path = Path(row["path"])
+    work = path.with_name(f"{path.stem}.editing.pptx")
+    shutil.copyfile(path, work)
+    try:
+        scene.apply_edits(work, number, [e.model_dump(exclude_none=True) for e in edits.shapes])
+    except IndexError:
+        work.unlink(missing_ok=True)
+        raise HTTPException(404, "That slide doesn't exist.")
+    except Exception:  # noqa: BLE001
+        log.exception("Saving slide edits failed")
+        work.unlink(missing_ok=True)
+        raise HTTPException(500, "Something went wrong while saving. Your slide is unchanged.")
+    work.replace(path)
+    db.run(
+        "UPDATE generations SET rev=rev+1, preview_status=?, preview_count=0 WHERE id=? AND owner=?",
+        ("pending" if previews_available() else "unavailable", gen_id, owner()),
+    )
+    if previews_available():
+        background.add_task(_render_in_background, "generations", "generations", gen_id, path)
+    return _generation_out(db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner())))
 
 
 @app.get("/api/generations")
