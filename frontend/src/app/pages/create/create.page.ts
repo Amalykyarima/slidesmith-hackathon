@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
-import { GenerateRequest, Generation, SlideStyle, UploadedImage } from '../../core/models';
+import { BuildSlide, GenerateRequest, Generation, SlideKind, SlideStyle, UploadedImage } from '../../core/models';
 
 interface Row {
   key: number;
@@ -12,7 +12,23 @@ interface Row {
   image: UploadedImage | null;
   uploading: boolean;
   error: string | null;
+  /** Routine slide to copy (e.g. "retrieval"), set by an imported lesson file. */
+  role: string;
+  /** Speaker notes from an imported lesson file. */
+  notes: string;
 }
+
+/** Shape of a lesson file: { title, slides: [{ page, title, bullets, role, notes }] } or just the slides array. */
+interface LessonFileSlide {
+  page?: number;
+  title?: string;
+  subtitle?: string;
+  bullets?: unknown;
+  role?: string;
+  notes?: string;
+}
+
+const BULLET_MARK = /^\s*[-•*]\s+/;
 
 const DRAFT_KEY = 'slidesmith.draft.v1';
 
@@ -37,6 +53,9 @@ export class CreatePage {
   protected readonly topic = signal('');
   protected readonly instructions = signal('');
   protected readonly rows = signal<Row[]>([this.blankRow(1)]);
+  /** On: each page's first line is the title and every further line a bullet, built without the AI. */
+  protected readonly exact = signal(false);
+  protected readonly notice = signal<string | null>(null);
 
   protected readonly generating = signal(false);
   protected readonly error = signal<string | null>(null);
@@ -71,7 +90,8 @@ export class CreatePage {
         title: this.title(),
         topic: this.topic(),
         instructions: this.instructions(),
-        rows: this.rows().map(({ page, details, image }) => ({ page, details, image })),
+        exact: this.exact(),
+        rows: this.rows().map(({ page, details, image, role, notes }) => ({ page, details, image, role, notes })),
       };
       try {
         localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -85,7 +105,7 @@ export class CreatePage {
 
   // ------------------------------------------------------------------ setup
   private blankRow(page: number): Row {
-    return { key: this.nextKey++, page, details: '', image: null, uploading: false, error: null };
+    return { key: this.nextKey++, page, details: '', image: null, uploading: false, error: null, role: '', notes: '' };
   }
 
   private restoreDraft(): void {
@@ -97,12 +117,15 @@ export class CreatePage {
       this.title.set(d.title ?? '');
       this.topic.set(d.topic ?? '');
       this.instructions.set(d.instructions ?? '');
+      this.exact.set(!!d.exact);
       if (Array.isArray(d.rows) && d.rows.length) {
         this.rows.set(
-          d.rows.map((r: Pick<Row, 'page' | 'details' | 'image'>) => ({
-            ...this.blankRow(r.page),
+          d.rows.map((r: Partial<Row>) => ({
+            ...this.blankRow(r.page ?? 1),
             details: r.details ?? '',
             image: r.image ?? null,
+            role: r.role ?? '',
+            notes: r.notes ?? '',
           })),
         );
       }
@@ -171,11 +194,63 @@ export class CreatePage {
     this.patch(key, { image: null });
   }
 
+  // ----------------------------------------------------------- lesson files
+  /** Load a lesson file (e.g. alcohol_lesson.json) into the page rows and switch to exact text. */
+  protected async importLesson(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    this.error.set(null);
+    this.notice.set(null);
+    try {
+      const data = JSON.parse(await file.text());
+      const slides: LessonFileSlide[] = Array.isArray(data) ? data : data?.slides;
+      if (!Array.isArray(slides) || slides.length === 0) throw new Error('no slides');
+      const rows = slides.map((sl, i) => {
+        const bullets = Array.isArray(sl.bullets) ? sl.bullets.filter((b): b is string => typeof b === 'string') : [];
+        if (!bullets.length && sl.subtitle) bullets.push(sl.subtitle);
+        return {
+          ...this.blankRow(Number.isInteger(sl.page) && (sl.page as number) > 0 ? (sl.page as number) : i + 1),
+          details: [sl.title ?? '', ...bullets].join('\n').trim(),
+          role: typeof sl.role === 'string' ? sl.role : '',
+          notes: typeof sl.notes === 'string' ? sl.notes : '',
+        };
+      });
+      for (const old of this.rows()) {
+        if (old.image) void firstValueFrom(this.api.deleteImage(old.image.id)).catch(() => undefined);
+      }
+      this.rows.set(rows);
+      if (!Array.isArray(data) && typeof data.title === 'string') this.title.set(data.title);
+      this.exact.set(true);
+      this.notice.set(`Loaded ${rows.length} ${rows.length === 1 ? 'slide' : 'slides'} from ${file.name}. Your text will be used exactly as written.`);
+    } catch {
+      this.error.set(`${file.name} isn't a lesson file SlideSmith can read. It needs a "slides" list with a title and bullets for each page.`);
+    }
+  }
+
+  /** First line = title, every further line = one bullet. No AI involved. */
+  private toExactSlides(): BuildSlide[] {
+    const sorted = [...this.filledRows()].sort((a, b) => a.page - b.page);
+    return sorted.map((r, i) => {
+      const lines = r.details
+        .split('\n')
+        .map((l) => l.replace(BULLET_MARK, '').trim())
+        .filter(Boolean);
+      const [title = '', ...bullets] = lines;
+      let kind: SlideKind = 'content';
+      if (r.image) kind = 'image';
+      else if (!bullets.length) kind = i === 0 ? 'title' : 'section';
+      return { page: r.page, kind, title, bullets, notes: r.notes, role: r.role, image_id: r.image?.id ?? null };
+    });
+  }
+
   // --------------------------------------------------------------- generate
   protected async generate(): Promise<void> {
     const styleId = this.styleId();
     if (!styleId || !this.canSubmit()) return;
     this.error.set(null);
+    this.notice.set(null);
     this.generating.set(true);
     clearTimeout(this.pollTimer);
 
@@ -190,7 +265,11 @@ export class CreatePage {
     };
 
     try {
-      const generation = await firstValueFrom(this.api.generate(request));
+      const generation = await firstValueFrom(
+        this.exact()
+          ? this.api.build({ style_id: styleId, title: request.title, slides: this.toExactSlides() })
+          : this.api.generate(request),
+      );
       this.result.set(generation);
       this.pollPreviews(generation.id, 0);
       setTimeout(() => document.getElementById('result')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
@@ -220,8 +299,25 @@ export class CreatePage {
     this.title.set('');
     this.topic.set('');
     this.instructions.set('');
+    this.notice.set(null);
     this.rows.set([this.blankRow(1)]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  private static readonly ROLE_LABELS: Record<string, string> = {
+    retrieval: 'Retrieval',
+    vocabulary: 'Vocabulary',
+    turn_and_talk: 'Turn and Talk',
+    we_do: 'We do / MWB',
+    you_do: 'You do / Independent',
+    homework: 'Homelearning',
+    stretch: 'Stretch',
+    i_do: 'I do',
+    exit: 'Exit routine',
+  };
+
+  protected roleLabel(role: string): string {
+    return CreatePage.ROLE_LABELS[role] ?? role;
   }
 
   protected selectedStyle = computed(() => this.styles().find((s) => s.id === this.styleId()) ?? null);

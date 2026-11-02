@@ -4,6 +4,9 @@
 @if (error(); as message) {
   <div class="alert alert-error" role="alert">{{ message }}</div>
 }
+@if (notice(); as message) {
+  <div class="alert alert-info" role="status">{{ message }}</div>
+}
 
 <!-- ============ 1. Style ============ -->
 <section class="card section">
@@ -74,13 +77,29 @@
 
 <!-- ============ 3. Slides ============ -->
 <section class="card section">
-  <div class="section-head">
+  <div class="section-head wrap">
     <span class="section-num">3</span>
-    <div>
+    <div class="grow">
       <h2>What goes on each slide?</h2>
-      <p class="muted small">Write rough notes for each page number. Attach a picture to any page that needs one.</p>
+      @if (exact()) {
+        <p class="muted small">First line is the slide title; each line after it is one bullet. Used exactly as written, with no AI.</p>
+      } @else {
+        <p class="muted small">Write rough notes for each page number. Attach a picture to any page that needs one.</p>
+      }
+    </div>
+    <div class="slide-tools">
+      <input #lesson type="file" accept=".json,application/json" hidden (change)="importLesson($event)" />
+      <button type="button" class="btn btn-sm" (click)="lesson.click()">Import lesson file</button>
     </div>
   </div>
+
+  <label class="exact-toggle">
+    <input type="checkbox" [checked]="exact()" (change)="exact.set($any($event.target).checked)" />
+    <span>
+      <strong>Use my text exactly (no AI)</strong>
+      <span class="muted small">For slides you've already written. Nothing is reworded, and no AI credit is used.</span>
+    </span>
+  </label>
 
   <div class="slides">
     @for (row of rows(); track row.key) {
@@ -101,13 +120,28 @@
         <div class="slide-main">
           <textarea
             class="input"
-            rows="3"
             maxlength="4000"
             [ngModel]="row.details"
             (ngModelChange)="patch(row.key, { details: $event })"
-            placeholder="e.g. Intro to photosynthesis. Plants make food from sunlight. Needs water + CO₂. Ask: where does it happen?"
+            [attr.rows]="exact() ? 5 : 3"
+            [placeholder]="
+              exact()
+                ? 'Short-term effects\nSlower reaction times\nPoor judgement and risk-taking'
+                : 'e.g. Intro to photosynthesis. Plants make food from sunlight. Needs water + CO₂. Ask: where does it happen?'
+            "
             [attr.aria-label]="'Details for page ' + row.page"
           ></textarea>
+          @if (row.role || row.notes) {
+            <div class="row-meta small">
+              @if (row.role) {
+                <span class="badge" title="Uses your matching routine slide">Routine: {{ roleLabel(row.role) }}</span>
+                <button type="button" class="link-btn" (click)="patch(row.key, { role: '' })">clear</button>
+              }
+              @if (row.notes) {
+                <span class="muted" [title]="row.notes">Has speaker notes</span>
+              }
+            </div>
+          }
 
           <div class="attach">
             <input #file type="file" accept="image/*" hidden (change)="attach(row.key, $event)" />
@@ -151,11 +185,11 @@
     @if (generating()) {
       <span class="spinner"></span> Building your slides…
     } @else {
-      Generate {{ filledRows().length || '' }} {{ filledRows().length === 1 ? 'slide' : 'slides' }}
+      {{ exact() ? 'Build' : 'Generate' }} {{ filledRows().length || '' }} {{ filledRows().length === 1 ? 'slide' : 'slides' }}
     }
   </button>
   @if (generating()) {
-    <span class="muted small">This usually takes 10–30 seconds.</span>
+    <span class="muted small">{{ exact() ? 'This takes a few seconds.' : 'This usually takes 10–30 seconds.' }}</span>
   } @else if (!styleId()) {
     <span class="muted small">Choose a style first.</span>
   } @else if (filledRows().length === 0) {
@@ -173,6 +207,8 @@
           {{ r.slides.length }} {{ r.slides.length === 1 ? 'slide' : 'slides' }}
           @if (r.mode === 'ai') {
             <span class="badge badge-ai">Written with AI</span>
+          } @else if (r.mode === 'exact') {
+            <span class="badge" title="Built from your text exactly as written">Your exact text</span>
           } @else {
             <span class="badge" title="No AI key configured: slides use your notes as typed">Demo mode</span>
           }

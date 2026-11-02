@@ -1,0 +1,144 @@
+{
+  "title": "Alcohol",
+  "slides": [
+    {
+      "page": 1,
+      "kind": "content",
+      "title": "Alcohol   5th Nov 2026",
+      "bullets": [
+        "Retrieval Practice:",
+        "1. What is a drug? (1)",
+        "2. Give one medicinal and one recreational drug. (2)",
+        "3. What is meant by addiction? (1)",
+        "4. Which enzyme breaks down starch, and into what? (2)",
+        "5. Name two diseases linked to obesity. (2)",
+        "Challenge: Explain why the stomach produces acid. (2)"
+      ],
+      "role": "retrieval"
+    },
+    {
+      "page": 2,
+      "kind": "content",
+      "title": "Tier 2 Vocabulary",
+      "bullets": [
+        "impair (verb): to weaken or damage something so it works less well.",
+        "General: Lack of sleep can impair your ability to concentrate in lessons.",
+        "Scientific: Alcohol impairs the nervous system, so messages between the brain and body travel more slowly.",
+        "Application task: Write a grammatically-correct sentence using this word."
+      ]
+    },
+    {
+      "page": 3,
+      "kind": "content",
+      "title": "Turn and Talk",
+      "bullets": [
+        "Alcohol is legal. Why is it still classed as a drug?",
+        "Why is it illegal to sell alcohol to under-18s in the UK?",
+        "What effects of alcohol have you seen in adverts, TV or films? Are they accurate?"
+      ]
+    },
+    {
+      "page": 4,
+      "kind": "content",
+      "title": "What is alcohol?",
+      "bullets": [
+        "The alcohol in drinks is a chemical called ethanol.",
+        "It is a depressant: it slows down the nervous system, including the brain.",
+        "It is a legal recreational drug for adults, but it can cause addiction.",
+        "The liver breaks down alcohol, and this takes time."
+      ]
+    },
+    {
+      "page": 5,
+      "kind": "content",
+      "title": "Short-term effects",
+      "bullets": [
+        "Slower reaction times",
+        "Poor judgement and risk-taking",
+        "Loss of balance and coordination; slurred speech",
+        "Large amounts: vomiting, unconsciousness, alcohol poisoning",
+        "Why is it dangerous to drive after drinking alcohol?"
+      ]
+    },
+    {
+      "page": 6,
+      "kind": "content",
+      "title": "Long-term effects",
+      "bullets": [
+        "Liver damage, including cirrhosis (scarring of the liver)",
+        "Brain damage and memory problems",
+        "Heart disease and high blood pressure",
+        "Stomach ulcers and a higher risk of some cancers",
+        "In pregnancy: can cause fetal alcohol spectrum disorder"
+      ]
+    },
+    {
+      "page": 7,
+      "kind": "content",
+      "title": "Units of alcohol",
+      "bullets": [
+        "1 unit = 10 ml of pure alcohol",
+        "Units = % alcohol × volume (ml) ÷ 1000",
+        "Example: a pint (568 ml) of 4% beer = 4 × 568 ÷ 1000 = 2.3 units",
+        "UK guideline for adults: no more than 14 units a week, spread over 3 or more days"
+      ]
+    },
+    {
+      "page": 8,
+      "kind": "section",
+      "title": "MWB: Calculate the units",
+      "bullets": [
+        "1. A 330 ml can of 5% lager",
+        "2. A 175 ml glass of 12% wine",
+        "3. A 25 ml measure of 40% spirit"
+      ],
+      "notes": "Answers: 1.7, 2.1, 1.0 units"
+    },
+    {
+      "page": 9,
+      "kind": "section",
+      "title": "MWB: True or false?",
+      "bullets": [
+        "1. Alcohol is a stimulant.",
+        "2. The liver breaks down alcohol.",
+        "3. A pint of beer is always one unit.",
+        "4. Alcohol slows your reaction time."
+      ],
+      "notes": "Answers: 1 False (depressant), 2 True, 3 False (depends on % and volume), 4 True"
+    },
+    {
+      "page": 10,
+      "kind": "content",
+      "title": "Independent Task",
+      "bullets": [
+        "1. Describe what is meant by a depressant. (1)",
+        "2. Give two short-term effects of drinking alcohol. (2)",
+        "3. Explain why drinking alcohol before driving is dangerous. (2)",
+        "4. Name the organ most damaged by long-term drinking, and one disease it can cause. (2)",
+        "5. Calculate the units in a 500 ml bottle of 4% cider. Show your working. (2)",
+        "Challenge: Explain why pregnant women are advised not to drink alcohol. (2)"
+      ],
+      "notes": "Q5 answer: 4 × 500 ÷ 1000 = 2 units"
+    },
+    {
+      "page": 11,
+      "kind": "content",
+      "title": "Homelearning",
+      "bullets": [
+        "Design a leaflet for Year 7 pupils about alcohol.",
+        "Explain what a depressant is.",
+        "Give short-term and long-term effects.",
+        "Show how to calculate units."
+      ]
+    },
+    {
+      "page": 12,
+      "kind": "content",
+      "title": "Super stretch",
+      "bullets": [
+        "Why can two people react differently to the same amount of alcohol?",
+        "Think about: body mass, food in the stomach, and how quickly the liver works."
+      ]
+    }
+  ]
+}

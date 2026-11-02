@@ -50,12 +50,30 @@ export interface SlideContent {
   subtitle: string;
   bullets: string[];
   notes: string;
+  role?: string;
+}
+
+/** A finished slide sent word for word to POST /api/build (no AI). */
+export interface BuildSlide {
+  page: number;
+  kind: SlideKind;
+  title: string;
+  bullets: string[];
+  notes: string;
+  role: string;
+  image_id: string | null;
+}
+
+export interface BuildRequest {
+  style_id: string;
+  title: string;
+  slides: BuildSlide[];
 }
 
 export interface Generation {
   id: string;
   title: string;
-  mode: 'ai' | 'mock';
+  mode: 'ai' | 'mock' | 'exact';
   style_id: string;
   created_at: string;
   slides: SlideContent[];

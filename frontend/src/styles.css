@@ -75,6 +75,7 @@ textarea.input { resize: vertical; min-height: 84px; }
 .alert { padding: 12px 14px; border-radius: 10px; font-size: 14px; margin-bottom: 16px; }
 .alert-error { background: #fee4e2; color: #7a1a12; border: 1px solid #fda29b; }
 .alert-warn { background: var(--warn-bg); color: var(--warn-ink); border: 1px solid #f6d77a; }
+.alert-info { background: var(--primary-soft); color: var(--primary-dark); border: 1px solid var(--primary); }
 .alert ul { margin: 6px 0 0; padding-left: 18px; }
 
 .badge {

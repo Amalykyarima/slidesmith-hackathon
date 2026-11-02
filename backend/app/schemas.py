@@ -32,3 +32,22 @@ class SlideContent(BaseModel):
     notes: str = ""
     # Routine slide this page should copy (see roles.py), e.g. "retrieval". Empty = ordinary slide.
     role: str = ""
+
+
+class BuildSlide(SlideContent):
+    """A finished slide the teacher (or an imported lesson file) already wrote."""
+
+    page: int = Field(ge=1, le=200)
+    title: str = Field(default="", max_length=300)
+    subtitle: str = Field(default="", max_length=500)
+    bullets: list[str] = Field(default_factory=list, max_length=12)
+    notes: str = Field(default="", max_length=2000)
+    image_id: str | None = None
+
+
+class BuildRequest(BaseModel):
+    """Build a deck from finished content, word for word, without the AI."""
+
+    style_id: str
+    title: str = Field(default="", max_length=200)
+    slides: list[BuildSlide] = Field(min_length=1, max_length=40)
