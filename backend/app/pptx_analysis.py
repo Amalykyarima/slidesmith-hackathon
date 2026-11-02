@@ -8,6 +8,7 @@ shape is the title, which is the body, and where the pictures are.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,7 +20,7 @@ from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
 from pptx.slide import Slide
 
-from .roles import is_lesson_label, role_of
+from .roles import is_lesson_label, role_of, slot_key
 
 EMU_PER_PT = 12700
 
@@ -50,6 +51,9 @@ class SlideInfo:
     preview_text: str = ""
     role: str | None = None  # routine role, e.g. "retrieval", "turn_and_talk" (see roles.py)
     clutter: int = 0  # extra sample content that has to be stripped; lower is a cleaner exemplar
+    # Labelled boxes besides the body (shape id -> slot key, e.g. "definition", "application task").
+    # A line with the same label goes into that box instead of the body.
+    slots: dict[int, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -105,6 +109,24 @@ def _is_decoration(pic, slide_area: int, repeated: frozenset[str]) -> bool:
     if area >= 0.85 * slide_area:
         return True
     return area < 0.05 * slide_area and _image_hash(pic) in repeated
+
+
+def _has_labelled_content(text: str) -> bool:
+    """ "Label: something" with real content after the label (not a bare "Name:" prompt)."""
+    first = text.strip().splitlines()[0] if text.strip() else ""
+    return slot_key(first) is not None and bool(re.split(r"[:\-]", first, maxsplit=1)[-1].strip())
+
+
+def _is_edge_bar(shape, slide_w: int, slide_h: int) -> bool:
+    """A full-width strip along the top or bottom edge (e.g. a yellow "Tier 3 -" bar):
+    part of the teacher's routine layout, not sample content."""
+    try:
+        wide = shape.width >= 0.9 * slide_w
+        thin = shape.height <= 0.15 * slide_h
+        at_edge = shape.top <= 0.03 * slide_h or shape.top + shape.height >= 0.97 * slide_h
+    except TypeError:
+        return False
+    return wide and thin and at_edge
 
 
 def _overlap_ratio(shape, other) -> float:
@@ -230,7 +252,9 @@ def analyze_slide(
     if title is None and text_shapes:
         # Biggest font wins, ties broken by position (higher first). Prefer heading-like
         # boxes: a long box of questions in a big font is the body, not the title.
-        pool = [s for s in text_shapes if _is_title_like(s) and resolve_pt(s, slide, True) >= 12] or text_shapes
+        # A strip along the bottom edge ("Tier 3 -" footer) is never the heading.
+        candidates = [s for s in text_shapes if not (_is_edge_bar(s, slide_w, slide_h) and (s.top or 0) > slide_h / 2)]
+        pool = [s for s in candidates if _is_title_like(s) and resolve_pt(s, slide, True) >= 12] or candidates or text_shapes
         title = sorted(
             pool,
             key=lambda s: (-round(resolve_pt(s, slide, True) / 4), s.top or 0, s.left or 0),
@@ -244,7 +268,7 @@ def analyze_slide(
         # and not a caption sitting on top of a picture.
         if _area(s) < 0.03 * slide_area or resolve_pt(s, slide, False) < 9:
             return False
-        if is_lesson_label(_text(s)):
+        if is_lesson_label(_text(s)) or _is_edge_bar(s, slide_w, slide_h):
             return False
         return not any(_overlap_ratio(s, pic) > 0.5 for pic in pictures)
 
@@ -261,16 +285,24 @@ def analyze_slide(
     # Text boxes that carry sample content but aren't title/body: big ones are stale
     # sample content, and LO / Keywords labels belong to the sample's lesson. Small
     # footers and badges stay as part of the style.
-    # Captions laid over a sample picture go with that picture.
+    # Captions laid over a sample picture go with that picture. Labelled boxes with
+    # content after the label ("Essential (noun): absolutely necessary", "Application
+    # task: ...") belong to the sample lesson whatever their size.
     stale = [
         s.shape_id
         for s in rest
         if s is not body
         and _text(s)
         and (
-            _area(s) > 0.08 * slide_area
-            or is_lesson_label(_text(s))
-            or any(_overlap_ratio(s, pic) > 0.5 for pic in big_pictures)
+            is_lesson_label(_text(s))
+            or (
+                not _is_edge_bar(s, slide_w, slide_h)
+                and (
+                    _area(s) > 0.08 * slide_area
+                    or any(_overlap_ratio(s, pic) > 0.5 for pic in big_pictures)
+                    or _has_labelled_content(_text(s))
+                )
+            )
         )
     ]
 
@@ -305,6 +337,11 @@ def analyze_slide(
         preview_text=(title.text_frame.text.strip()[:80] if title is not None else ""),
         role=_slide_role(title, rest),
         clutter=len(stale) + len(big_pictures),
+        slots={
+            s.shape_id: key
+            for s in rest
+            if s.shape_id in stale and not is_lesson_label(_text(s)) and (key := slot_key(_text(s)))
+        },
     )
     return info
 
