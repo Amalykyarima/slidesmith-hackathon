@@ -1,4 +1,5 @@
 import logging
+import time
 import re
 import shutil
 import uuid
@@ -6,14 +7,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anthropic
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from pptx import Presentation
 
-from . import ai, config, db
+from . import ai, auth, config, db
+from .auth import owner
 from .generator import build_deck
 from .previews import previews_available, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile, style_roles
@@ -34,6 +36,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="SlideSmith API", lifespan=lifespan)
+app.add_middleware(auth.AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
@@ -103,7 +106,38 @@ def health():
         "ai_enabled": config.AI_ENABLED,
         "model": config.CLAUDE_MODEL if config.AI_ENABLED else None,
         "previews_enabled": previews_available(),
+        "auth_required": config.AUTH_ENABLED,
     }
+
+
+@app.get("/api/session")
+def session():
+    return {"auth_required": config.AUTH_ENABLED, "name": owner() or None}
+
+
+def _secure(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+
+
+@app.post("/api/login")
+def login(payload: dict, request: Request, response: Response):
+    if not config.AUTH_ENABLED:
+        return {"name": None}
+    name = auth.name_for_code(str(payload.get("code", "")))
+    if not name:
+        time.sleep(0.5)  # slow down guessing
+        raise HTTPException(401, "That access code isn't right. Check it and try again.")
+    response.set_cookie(
+        auth.COOKIE, auth.make_token(name), max_age=auth.MAX_AGE,
+        httponly=True, samesite="lax", secure=_secure(request), path="/",
+    )
+    return {"name": name}
+
+
+@app.post("/api/logout")
+def logout(request: Request, response: Response):
+    response.delete_cookie(auth.COOKIE, path="/", secure=_secure(request), httponly=True, samesite="lax")
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- #
@@ -111,7 +145,7 @@ def health():
 # --------------------------------------------------------------------------- #
 @app.get("/api/styles")
 def list_styles():
-    return [_style_out(r) for r in db.many("SELECT * FROM styles ORDER BY created_at DESC, rowid DESC")]
+    return [_style_out(r) for r in db.many("SELECT * FROM styles WHERE owner=? ORDER BY created_at DESC, rowid DESC", (owner(),))]
 
 
 @app.post("/api/styles", status_code=201)
@@ -137,17 +171,17 @@ def upload_style(background: BackgroundTasks, file: UploadFile = File(...), name
 
     display_name = name.strip() or Path(filename).stem
     db.run(
-        "INSERT INTO styles (id, name, filename, path, profile, preview_status) VALUES (?,?,?,?,?,?)",
-        (style_id, display_name, filename, str(path), db.dumps(profile), "pending" if previews_available() else "unavailable"),
+        "INSERT INTO styles (id, name, filename, path, profile, preview_status, owner) VALUES (?,?,?,?,?,?,?)",
+        (style_id, display_name, filename, str(path), db.dumps(profile), "pending" if previews_available() else "unavailable", owner()),
     )
     if previews_available():
         background.add_task(_render_in_background, "styles", "styles", style_id, path)
-    return _style_out(db.one("SELECT * FROM styles WHERE id=?", (style_id,)))
+    return _style_out(db.one("SELECT * FROM styles WHERE id=? AND owner=?", (style_id, owner())))
 
 
 @app.get("/api/styles/{style_id}")
 def get_style(style_id: str):
-    row = db.one("SELECT * FROM styles WHERE id=?", (style_id,))
+    row = db.one("SELECT * FROM styles WHERE id=? AND owner=?", (style_id, owner()))
     if not row:
         raise HTTPException(404, "Style not found")
     return _style_out(row)
@@ -158,15 +192,15 @@ def rename_style(style_id: str, payload: dict):
     name = str(payload.get("name", "")).strip()
     if not name:
         raise HTTPException(400, "Name can't be empty")
-    if not db.one("SELECT id FROM styles WHERE id=?", (style_id,)):
+    if not db.one("SELECT id FROM styles WHERE id=? AND owner=?", (style_id, owner())):
         raise HTTPException(404, "Style not found")
     db.run("UPDATE styles SET name=? WHERE id=?", (name[:80], style_id))
-    return _style_out(db.one("SELECT * FROM styles WHERE id=?", (style_id,)))
+    return _style_out(db.one("SELECT * FROM styles WHERE id=? AND owner=?", (style_id, owner())))
 
 
 @app.delete("/api/styles/{style_id}", status_code=204)
 def delete_style(style_id: str):
-    row = db.one("SELECT * FROM styles WHERE id=?", (style_id,))
+    row = db.one("SELECT * FROM styles WHERE id=? AND owner=?", (style_id, owner()))
     if not row:
         raise HTTPException(404, "Style not found")
     Path(row["path"]).unlink(missing_ok=True)
@@ -207,15 +241,15 @@ def upload_image(file: UploadFile = File(...)):
         raise HTTPException(400, "That file isn't a supported image (use PNG, JPG, GIF or WEBP).")
 
     db.run(
-        "INSERT INTO images (id, filename, path, width, height) VALUES (?,?,?,?,?)",
-        (image_id, file.filename or path.name, str(path), width, height),
+        "INSERT INTO images (id, filename, path, width, height, owner) VALUES (?,?,?,?,?,?)",
+        (image_id, file.filename or path.name, str(path), width, height, owner()),
     )
     return {"id": image_id, "filename": file.filename, "width": width, "height": height, "url": f"/files/images/{path.name}"}
 
 
 @app.delete("/api/images/{image_id}", status_code=204)
 def delete_image(image_id: str):
-    row = db.one("SELECT * FROM images WHERE id=?", (image_id,))
+    row = db.one("SELECT * FROM images WHERE id=? AND owner=?", (image_id, owner()))
     if row:
         Path(row["path"]).unlink(missing_ok=True)
         db.run("DELETE FROM images WHERE id=?", (image_id,))
@@ -225,7 +259,7 @@ def delete_image(image_id: str):
 # Generation
 # --------------------------------------------------------------------------- #
 def _load_style(style_id: str) -> dict:
-    style = db.one("SELECT * FROM styles WHERE id=?", (style_id,))
+    style = db.one("SELECT * FROM styles WHERE id=? AND owner=?", (style_id, owner()))
     if not style:
         raise HTTPException(404, "That style no longer exists. Pick another one.")
     return style
@@ -242,7 +276,7 @@ def _image_paths(slides) -> dict[int, Path]:
     paths: dict[int, Path] = {}
     for spec in slides:
         if spec.image_id:
-            row = db.one("SELECT * FROM images WHERE id=?", (spec.image_id,))
+            row = db.one("SELECT * FROM images WHERE id=? AND owner=?", (spec.image_id, owner()))
             if not row:
                 raise HTTPException(400, f"The image for page {spec.page} was not found. Please upload it again.")
             paths[spec.page] = Path(row["path"])
@@ -269,7 +303,7 @@ def _build_and_record(
         raise HTTPException(500, "Something went wrong while building the slides. Try a different style deck or fewer slides.")
 
     db.run(
-        "INSERT INTO generations (id, style_id, title, mode, request, slides, warnings, path, preview_status) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO generations (id, style_id, title, mode, request, slides, warnings, path, preview_status, owner) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
             gen_id,
             style["id"],
@@ -280,11 +314,12 @@ def _build_and_record(
             db.dumps(warnings),
             str(out_path),
             "pending" if previews_available() else "unavailable",
+            owner(),
         ),
     )
     if previews_available():
         background.add_task(_render_in_background, "generations", "generations", gen_id, out_path)
-    return _generation_out(db.one("SELECT * FROM generations WHERE id=?", (gen_id,)))
+    return _generation_out(db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner())))
 
 
 @app.post("/api/generate", status_code=201)
@@ -297,6 +332,18 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     prs = Presentation(str(Path(style["path"])))
     infos = analyze_presentation(prs)
     capacity = {**content_capacity(prs, infos), "roles": style_roles(prs, infos)}
+
+    if config.AI_ENABLED and config.AI_DAILY_LIMIT:
+        used = db.one(
+            "SELECT COUNT(*) AS n FROM generations WHERE owner=? AND mode='ai' AND date(created_at)=date('now')",
+            (owner(),),
+        )["n"]
+        if used >= config.AI_DAILY_LIMIT:
+            raise HTTPException(
+                429,
+                f"You've used today's {config.AI_DAILY_LIMIT} AI generations. Tick \"Use my text exactly (no AI)\" "
+                "to keep building today, or try again tomorrow.",
+            )
 
     try:
         contents, mode = ai.generate_content(req, image_paths, capacity)
@@ -326,13 +373,13 @@ def build_exact(req: BuildRequest, background: BackgroundTasks):
 
 @app.get("/api/generations")
 def list_generations():
-    rows = db.many("SELECT * FROM generations ORDER BY created_at DESC, rowid DESC LIMIT 20")
+    rows = db.many("SELECT * FROM generations WHERE owner=? ORDER BY created_at DESC, rowid DESC LIMIT 20", (owner(),))
     return [_generation_out(r) for r in rows]
 
 
 @app.get("/api/generations/{gen_id}")
 def get_generation(gen_id: str):
-    row = db.one("SELECT * FROM generations WHERE id=?", (gen_id,))
+    row = db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner()))
     if not row:
         raise HTTPException(404, "Not found")
     return _generation_out(row)
@@ -340,7 +387,22 @@ def get_generation(gen_id: str):
 
 @app.get("/api/generations/{gen_id}/download")
 def download_generation(gen_id: str):
-    row = db.one("SELECT * FROM generations WHERE id=?", (gen_id,))
+    row = db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner()))
     if not row or not Path(row["path"]).exists():
         raise HTTPException(404, "File not found")
     return FileResponse(row["path"], media_type=PPTX_MIME, filename=f"{_slugify(row['title'] or '')}.pptx")
+
+
+# --------------------------------------------------------------------------- #
+# The Angular app (production: one service serves both the API and the pages)
+# --------------------------------------------------------------------------- #
+@app.get("/{full_path:path}", include_in_schema=False)
+def frontend(full_path: str):
+    dist = config.FRONTEND_DIST.resolve()
+    if full_path.startswith(("api/", "files/")) or not (dist / "index.html").exists():
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    candidate = (dist / full_path).resolve()
+    if full_path and candidate.is_file() and dist in candidate.parents:
+        return FileResponse(candidate)
+    # Client-side routes (/styles, /create, /login) all load the app shell.
+    return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache"})

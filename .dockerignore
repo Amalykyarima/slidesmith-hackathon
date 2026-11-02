@@ -1,0 +1,14 @@
+.git
+.github
+.devcontainer
+docs
+**/node_modules
+**/.angular
+**/dist
+**/.venv
+**/__pycache__
+**/.pytest_cache
+backend/storage
+backend/tests
+backend/.env
+**/.env

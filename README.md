@@ -65,3 +65,8 @@ further line a bullet, built in your style with no AI call. **Import lesson file
 `docs/examples/alcohol_lesson.json` (`{ "title", "slides": [{ "page", "title", "bullets", "role", "notes" }] }`).
 `role` (e.g. `retrieval`, `turn_and_talk`, `we_do`, `you_do`) picks your matching routine slide; it is optional because
 headings like "Turn and Talk" are recognised anyway. The API behind it is `POST /api/build`.
+
+## Hosting
+`Dockerfile` + `render.yaml` deploy SlideSmith to Render's free plan as one service with
+access-code sign-in. Step by step: [docs/HOSTING.md](docs/HOSTING.md). Locally nothing changes: without
+`ACCESS_CODES` there is no sign-in.

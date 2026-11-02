@@ -6,10 +6,14 @@
     SlideSmith
   </a>
 
-  <nav aria-label="Main">
-    <a routerLink="/styles" routerLinkActive="active"><span class="step">1</span>Styles</a>
-    <a routerLink="/create" routerLinkActive="active"><span class="step">2</span>Create slides</a>
-  </nav>
+  @if (auth.signedIn()) {
+    <nav aria-label="Main">
+      <a routerLink="/styles" routerLinkActive="active"><span class="step">1</span>Styles</a>
+      <a routerLink="/create" routerLinkActive="active"><span class="step">2</span>Create slides</a>
+    </nav>
+  } @else {
+    <span class="spacer"></span>
+  }
 
   @let h = health();
   @if (h === null) {
@@ -20,6 +24,12 @@
     } @else {
       <span class="pill pill-warn" title="No ANTHROPIC_API_KEY set. Slides are built from your notes without AI rewriting.">Demo mode · no AI key</span>
     }
+  }
+  @if (auth.name(); as name) {
+    <span class="who">
+      <span class="small muted">{{ name }}</span>
+      <button type="button" class="btn btn-sm" (click)="signOut()">Sign out</button>
+    </span>
   }
 </header>
 

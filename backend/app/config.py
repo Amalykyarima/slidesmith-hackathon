@@ -46,3 +46,34 @@ def find_soffice() -> str | None:
 
 SOFFICE = find_soffice()
 AI_ENABLED = bool(ANTHROPIC_API_KEY)
+
+# --------------------------------------------------------------------------- #
+# Hosting
+# --------------------------------------------------------------------------- #
+def _parse_codes(raw: str) -> dict[str, str]:
+    """ "Mrs Khan:maple-42, Mr Lee:river-7" -> {"maple-42": "Mrs Khan", "river-7": "Mr Lee"}.
+    A code without a name ("maple-42") signs in as "Teacher"."""
+    codes: dict[str, str] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        name, sep, code = item.rpartition(":")
+        code = code.strip()
+        if code:
+            codes[code] = (name.strip() if sep else "") or "Teacher"
+    return codes
+
+
+# Teachers sign in with an access code. Empty = no login (local development).
+ACCESS_CODES = _parse_codes(os.getenv("ACCESS_CODES", ""))
+AUTH_ENABLED = bool(ACCESS_CODES)
+# Signs the login cookie. Set it on the host so sign-ins survive restarts.
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip() or os.urandom(32).hex()
+# Small hosts (Render free: 512 MB) can't preview a 70-slide deck in one go.
+# 0 = no limit. Only the first N slides of a deck get thumbnails.
+PREVIEW_MAX_SLIDES = int(os.getenv("PREVIEW_MAX_SLIDES", "0") or 0)
+# Most AI generations one teacher can run per day. 0 = no limit.
+AI_DAILY_LIMIT = int(os.getenv("AI_DAILY_LIMIT", "0") or 0)
+# Built Angular app, served by FastAPI in production (one service, one address).
+FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", BASE_DIR.parent / "frontend" / "dist" / "frontend" / "browser"))

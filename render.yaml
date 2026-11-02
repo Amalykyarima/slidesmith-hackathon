@@ -1,0 +1,24 @@
+# Render Blueprint: Dashboard > New > Blueprint > pick this repo.
+# Free plan: sleeps after 15 min idle (about a minute to wake) and its disk is wiped on
+# every sleep, restart or deploy, so teachers re-upload their style decks after a sleep.
+services:
+  - type: web
+    name: slidesmith
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: ANTHROPIC_API_KEY      # from platform.claude.com; leave empty for demo mode
+        sync: false
+      - key: ACCESS_CODES           # e.g. "Mrs Khan:maple-42, Mr Lee:river-7"
+        sync: false
+      - key: SECRET_KEY             # signs the sign-in cookie
+        generateValue: true
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-5-5
+      - key: PREVIEW_MAX_SLIDES     # keeps LibreOffice under the 512 MB limit
+        value: "12"
+      - key: AI_DAILY_LIMIT         # AI generations per teacher per day
+        value: "20"
