@@ -16,7 +16,9 @@
   }
 
   @let h = health();
-  @if (h === null) {
+  @if (!auth.signedIn()) {
+    <!-- signed out: no status badge, just the sign-in page -->
+  } @else if (h === null) {
     <span class="pill pill-bad" title="Start the backend: uvicorn app.main:app --reload --port 8000">Backend offline</span>
   } @else if (h) {
     @if (h.ai_enabled) {
