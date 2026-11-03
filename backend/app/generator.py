@@ -8,6 +8,7 @@ they are literally the teacher's own slides.
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import math
 import re
 from collections import Counter
@@ -21,6 +22,7 @@ from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.oxml.ns import qn
 from pptx.util import Emu
 
+from . import dates
 from .pptx_analysis import (
     EMU_PER_PT,
     SlideInfo,
@@ -111,6 +113,34 @@ def clone_slide(prs, src):
 # --------------------------------------------------------------------------- #
 def _para_text(p) -> str:
     return "".join(t.text or "" for t in p.iter(qn("a:t")))
+
+
+def refresh_dates(slide, lesson: dt.date) -> int:
+    """Dates copied from the sample ("24th Sep 2026") become the lesson's date, written
+    the same way. Runs keep their formatting; a date split over runs ends up in the first.
+    Auto-updating date fields are left to PowerPoint. Returns how many were changed."""
+    changed = 0
+    for p in slide.shapes._spTree.iter(qn("a:p")):
+        ts = [t for t in p.iter(qn("a:t")) if t.getparent().tag == qn("a:r")]
+        text = "".join(t.text or "" for t in ts)
+        found = dates.find_dates(text)
+        if not found:
+            continue
+        spans, pos = [], 0
+        for t in ts:
+            spans.append((t, pos, pos + len(t.text or "")))
+            pos += len(t.text or "")
+        for f in reversed(found):  # back to front keeps earlier offsets valid
+            new, placed = f.write(lesson), False
+            for t, a, b in spans:
+                if b <= f.start or a >= f.end:
+                    continue
+                cut_a, cut_b = max(f.start, a) - a, min(f.end, b) - a
+                old = t.text or ""
+                t.text = old[:cut_a] + ("" if placed else new) + old[cut_b:]
+                placed = True
+            changed += 1
+    return changed
 
 
 def _set_para_text(p, text: str) -> None:
@@ -344,6 +374,11 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
     for i, line in enumerate(lines):
         p = copy.deepcopy(label_template if i == 0 and label_template is not None else template)
         parts = _split_title(line) if is_title and len(lines) == 1 else None
+        if is_title and len(lines) == 1 and parts is None:
+            # Her heading is "Topic <spaces> Date": keep the (refreshed) date beside the new topic.
+            gap = re.match(r"^\s*(\S.*?)(\s{4,})(\S.*?)\s*$", _para_text(p))
+            if gap and (d := dates.find_dates(gap.group(3))) and d[0].text.strip() == gap.group(3).strip():
+                parts = (line, gap.group(3).strip())
         if parts and _GAP.search(_para_text(p)) and _fill_gap_title(p, *parts):
             pass
         else:
@@ -572,12 +607,14 @@ def _delete_slide(prs, slide) -> None:
 
 
 def _render_page(prs, originals, info: SlideInfo | None, kind: str, content: SlideContent,
-                 image: Path | None, label: str, warnings: list[str]):
+                 image: Path | None, label: str, warnings: list[str], lesson: dt.date | None = None):
     """Clone the sample (or a layout), place the picture, then fill the text."""
     bullets = list(content.bullets)
     slot_lines: dict[int, str] = {}
     if info is not None:
         slide = clone_slide(prs, originals[info.index])
+        if lesson:
+            refresh_dates(slide, lesson)  # before the new text goes in: only the sample's dates change
         target = Target(
             slide=slide,
             title=shape_by_id(slide, info.title_id) if info.title_id is not None else None,
@@ -657,6 +694,7 @@ def build_deck(
     out_path: Path,
     deck_title: str = "",
     videos: dict[int, str] | None = None,
+    lesson_date: dt.date | None = None,
 ) -> list[str]:
     """`videos`: page -> video link. When that page's picture is the video's thumbnail
     (videos.thumbnail), clicking the picture opens the video; when the teacher also gave
@@ -664,6 +702,7 @@ def build_deck(
     from . import videos as vids
 
     videos = videos or {}
+    lesson = lesson_date or dates.next_school_day()
     prs = Presentation(str(style_path))
     warnings: list[str] = []
     originals = list(prs.slides)
@@ -692,7 +731,7 @@ def build_deck(
 
         if not infos:
             page_warnings: list[str] = []
-            slide = _render_page(prs, originals, None, kind, content, image, label, page_warnings)
+            slide = _render_page(prs, originals, None, kind, content, image, label, page_warnings, lesson)
             finish_video(slide, content, image)
             warnings += page_warnings
             if missing := missing_text(slide, content):
@@ -704,7 +743,7 @@ def build_deck(
         attempts = []  # (missing, slide, info, by_role, page_warnings)
         for info, by_role in candidates[:MAX_ATTEMPTS]:
             page_warnings = []
-            slide = _render_page(prs, originals, info, kind, content, image, label, page_warnings)
+            slide = _render_page(prs, originals, info, kind, content, image, label, page_warnings, lesson)
             missing = missing_text(slide, content)
             attempts.append((missing, slide, info, by_role, page_warnings))
             if not missing:

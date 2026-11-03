@@ -58,10 +58,17 @@
     </div>
   </div>
   <div class="stack">
-    <label class="field">
-      Deck title
-      <input class="input" [(ngModel)]="title" maxlength="200" placeholder="e.g. Cells and Photosynthesis" />
-    </label>
+    <div class="title-row">
+      <label class="field">
+        Deck title
+        <input class="input" [(ngModel)]="title" maxlength="200" placeholder="e.g. Cells and Photosynthesis" />
+      </label>
+      <label class="field">
+        Lesson date
+        <input class="input" type="date" [ngModel]="lessonDate()" (ngModelChange)="lessonDate.set($event || nextSchoolDay())" required />
+        <span class="hint">{{ lessonDateLabel() }} · replaces the dates on your slides</span>
+      </label>
+    </div>
     <div class="two">
       <label class="field">
         Subject / year group

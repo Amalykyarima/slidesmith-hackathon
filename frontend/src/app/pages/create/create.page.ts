@@ -57,6 +57,12 @@ export class CreatePage {
   protected readonly styleId = signal<string | null>(null);
 
   protected readonly title = signal('');
+  /** yyyy-mm-dd. Dates on her sample slides become this one, written her way. */
+  protected readonly lessonDate = signal(nextSchoolDay());
+  protected readonly lessonDateLabel = computed(() =>
+    new Date(this.lessonDate() + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }),
+  );
+  protected readonly nextSchoolDay = nextSchoolDay;
   protected readonly topic = signal('');
   protected readonly instructions = signal('');
   protected readonly rows = signal<Row[]>([this.blankRow(1)]);
@@ -112,6 +118,7 @@ export class CreatePage {
         topic: this.topic(),
         instructions: this.instructions(),
         exact: this.exact(),
+        lessonDate: this.lessonDate(),
         rows: this.rows().map(({ page, details, image, role, notes, video }) => ({ page, details, image, role, notes, video })),
       };
       try {
@@ -139,6 +146,8 @@ export class CreatePage {
       this.topic.set(d.topic ?? '');
       this.instructions.set(d.instructions ?? '');
       this.exact.set(!!d.exact);
+      // A date from an old draft that has already passed falls back to the next school day.
+      if (typeof d.lessonDate === 'string' && d.lessonDate >= isoDay(new Date())) this.lessonDate.set(d.lessonDate);
       if (Array.isArray(d.rows) && d.rows.length) {
         this.rows.set(
           d.rows.map((r: Partial<Row>) => ({
@@ -303,6 +312,7 @@ export class CreatePage {
     const request: GenerateRequest = {
       style_id: styleId,
       title: this.title().trim(),
+      lesson_date: this.lessonDate(),
       topic: this.topic().trim(),
       instructions: this.instructions().trim(),
       slides: [...this.filledRows()]
@@ -315,7 +325,7 @@ export class CreatePage {
     try {
       const generation = await firstValueFrom(
         this.exact()
-          ? this.api.build({ style_id: styleId, title: request.title, slides: this.toExactSlides() })
+          ? this.api.build({ style_id: styleId, title: request.title, slides: this.toExactSlides(), lesson_date: this.lessonDate() })
           : this.api.generate(request),
       );
       this.result.set(generation);
@@ -390,4 +400,16 @@ function preloadImage(url: string): Promise<void> {
     img.onload = img.onerror = () => resolve();
     img.src = url;
   });
+}
+
+function isoDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Tomorrow, or Monday after a Friday or weekend. */
+function nextSchoolDay(): string {
+  const d = new Date();
+  do d.setDate(d.getDate() + 1);
+  while (d.getDay() === 0 || d.getDay() === 6);
+  return isoDay(d);
 }

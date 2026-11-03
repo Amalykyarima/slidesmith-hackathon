@@ -1,6 +1,7 @@
 # Render Blueprint: Dashboard > New > Blueprint > pick this repo.
 # Free plan: sleeps after 15 min idle (about a minute to wake) and its disk is wiped on
-# every sleep, restart or deploy, so teachers re-upload their style decks after a sleep.
+# every sleep, restart or deploy. Set the two SUPABASE_ keys (docs/HOSTING.md) and work is
+# saved to Supabase Storage and brought back on every start.
 services:
   - type: web
     name: slidesmith
@@ -22,3 +23,9 @@ services:
         value: "12"
       - key: AI_DAILY_LIMIT         # AI generations per teacher per day
         value: "20"
+      - key: SUPABASE_URL           # e.g. https://abcd1234.supabase.co (Project Settings > API)
+        sync: false
+      - key: SUPABASE_SERVICE_KEY   # the service_role / secret key: never put it in the frontend
+        sync: false
+      - key: SUPABASE_BUCKET        # a PRIVATE bucket you create in Supabase Storage
+        value: slidesmith
