@@ -33,6 +33,7 @@ export interface SlideSpec {
   page: number;
   details: string;
   image_id: string | null;
+  video_url?: string | null;
 }
 
 export interface GenerateRequest {
@@ -62,6 +63,7 @@ export interface BuildSlide {
   notes: string;
   role: string;
   image_id: string | null;
+  video_url?: string | null;
 }
 
 export interface BuildRequest {

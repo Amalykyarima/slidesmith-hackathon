@@ -11,6 +11,7 @@ class SlideSpec(BaseModel):
     page: int = Field(ge=1, le=200)
     details: str = Field(default="", max_length=4000)
     image_id: str | None = None
+    video_url: str | None = Field(default=None, max_length=500)  # shown as a clickable thumbnail
 
 
 class GenerateRequest(BaseModel):
@@ -43,6 +44,7 @@ class BuildSlide(SlideContent):
     bullets: list[str] = Field(default_factory=list, max_length=12)
     notes: str = Field(default="", max_length=2000)
     image_id: str | None = None
+    video_url: str | None = Field(default=None, max_length=500)
 
 
 class TextRun(BaseModel):

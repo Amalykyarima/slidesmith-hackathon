@@ -21,7 +21,7 @@ from .generator import build_deck
 from .previews import previews_available, render_into, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile, style_roles
 from .schemas import BuildRequest, GenerateRequest, SlideContent, SlideEdits
-from . import scene
+from . import scene, videos
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidesmith")
@@ -356,6 +356,22 @@ def _image_paths(slides) -> dict[int, Path]:
     return paths
 
 
+def _video_links(slides, image_paths: dict[int, Path]) -> dict[int, str]:
+    """Checked video link per page. A page with a link but no picture gets the video's
+    thumbnail as its picture (added to image_paths)."""
+    links: dict[int, str] = {}
+    for spec in slides:
+        if not (spec.video_url or "").strip():
+            continue
+        try:
+            links[spec.page] = videos.clean_url(spec.video_url)
+        except ValueError as err:
+            raise HTTPException(400, f"Page {spec.page}: {err}")
+        if spec.page not in image_paths:
+            image_paths[spec.page] = videos.thumbnail(links[spec.page])
+    return links
+
+
 def _build_and_record(
     style: dict,
     title: str,
@@ -364,12 +380,13 @@ def _build_and_record(
     image_paths: dict[int, Path],
     mode: str,
     background: BackgroundTasks,
+    video_links: dict[int, str] | None = None,
 ) -> dict:
     """Pour finished slide content into the style, save the deck, start previews."""
     gen_id = uuid.uuid4().hex[:12]
     out_path = config.OUTPUTS_DIR / f"{gen_id}.pptx"
     try:
-        warnings = build_deck(Path(style["path"]), contents, image_paths, out_path, deck_title=title)
+        warnings = build_deck(Path(style["path"]), contents, image_paths, out_path, deck_title=title, videos=video_links)
     except Exception:  # noqa: BLE001
         log.exception("Deck generation failed")
         out_path.unlink(missing_ok=True)
@@ -401,6 +418,7 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     style = _load_style(req.style_id)
     _check_pages([s.page for s in req.slides])
     image_paths = _image_paths(req.slides)
+    video_links = _video_links(req.slides, image_paths)
 
     prs = Presentation(str(Path(style["path"])))
     infos = analyze_presentation(prs)
@@ -428,7 +446,7 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
         log.exception("Anthropic API error")
         raise HTTPException(502, f"The AI service returned an error: {getattr(exc, 'message', exc)}")
 
-    return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, mode, background)
+    return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, mode, background, video_links)
 
 
 @app.post("/api/build", status_code=201)
@@ -437,11 +455,12 @@ def build_exact(req: BuildRequest, background: BackgroundTasks):
     style = _load_style(req.style_id)
     _check_pages([s.page for s in req.slides])
     image_paths = _image_paths(req.slides)
+    video_links = _video_links(req.slides, image_paths)
     contents = [
-        SlideContent(**s.model_dump(exclude={"image_id"}))
+        SlideContent(**s.model_dump(exclude={"image_id", "video_url"}))
         for s in sorted(req.slides, key=lambda s: s.page)
     ]
-    return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, "exact", background)
+    return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, "exact", background, video_links)
 
 
 # --------------------------------------------------------------------------- #
