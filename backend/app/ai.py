@@ -109,6 +109,9 @@ def _build_user_content(req: GenerateRequest, images: dict[int, Path], capacity:
     blocks: list[dict] = [{"type": "text", "text": "\n".join(lines)}]
     for spec in sorted(req.slides, key=lambda s: s.page):
         text = f"\n--- Page {spec.page} ---\nTeacher's notes: {spec.details.strip() or '(none, use the topic)'}"
+        if (getattr(spec, "video_url", None) or "").strip():
+            text += ("\nThis page shows a video (its picture appears on the slide and opens the video when "
+                     "clicked). Don't write the video's web address in the slide text.")
         if spec.page in images:
             text += "\nAn image is attached to this page (shown next)."
         blocks.append({"type": "text", "text": text})

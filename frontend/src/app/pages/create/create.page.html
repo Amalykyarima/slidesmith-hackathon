@@ -159,10 +159,58 @@
                 Add picture
               </button>
             }
+            @if (!row.videoOpen) {
+              <button type="button" class="btn btn-sm" (click)="patch(row.key, { videoOpen: true })">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="m10 9 5 3-5 3z" fill="currentColor"/></svg>
+                Add video link
+              </button>
+            }
             @if (row.error) {
               <span class="small err">{{ row.error }}</span>
             }
           </div>
+
+          @if (row.videoOpen) {
+            @let v = video(row);
+            @let vErr = videoError(row);
+            <div class="video-box">
+              <label class="video-field">
+                <span class="sr-only">Video link for page {{ row.page }}</span>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+                <input
+                  class="input"
+                  type="url"
+                  inputmode="url"
+                  maxlength="500"
+                  placeholder="Paste a YouTube or other video link"
+                  [ngModel]="row.video"
+                  (ngModelChange)="patch(row.key, { video: $event })"
+                  [attr.aria-invalid]="!!vErr"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button type="button" class="btn btn-icon" aria-label="Remove video link" (click)="closeVideo(row.key)">✕</button>
+              </label>
+              @if (vErr) {
+                <span class="small err">{{ vErr }}</span>
+              } @else if (v) {
+                <span class="video-preview">
+                  <span class="video-thumb" [class.yt]="v.youtubeId">
+                    @if (v.youtubeId) {
+                      <img [src]="'https://img.youtube.com/vi/' + v.youtubeId + '/mqdefault.jpg'" alt="" />
+                    }
+                    <span class="play" aria-hidden="true"></span>
+                  </span>
+                  <span class="small">
+                    <strong>{{ v.youtubeId ? 'YouTube video' : 'Video · ' + v.host }}</strong><br />
+                    <span class="muted">
+                      {{ row.image ? 'A “Watch the video” link is added under your text.' : 'Shown on the slide; click it to play.' }}
+                    </span>
+                  </span>
+                </span>
+              }
+            </div>
+          }
         </div>
 
         <button type="button" class="btn btn-icon" aria-label="Delete this slide" (click)="removeRow(row.key)">

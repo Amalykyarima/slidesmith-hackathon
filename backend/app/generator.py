@@ -656,7 +656,14 @@ def build_deck(
     image_paths: dict[int, Path],
     out_path: Path,
     deck_title: str = "",
+    videos: dict[int, str] | None = None,
 ) -> list[str]:
+    """`videos`: page -> video link. When that page's picture is the video's thumbnail
+    (videos.thumbnail), clicking the picture opens the video; when the teacher also gave
+    a picture, a "Watch the video" line links to it instead."""
+    from . import videos as vids
+
+    videos = videos or {}
     prs = Presentation(str(style_path))
     warnings: list[str] = []
     originals = list(prs.slides)
@@ -664,14 +671,29 @@ def build_deck(
     usage: Counter = Counter()
     noted: set[tuple[str, str]] = set()
 
+    def finish_video(slide, content, image) -> None:
+        url = videos.get(content.page)
+        if not url:
+            return
+        if vids.is_thumbnail(image):
+            vids.link_picture(slide, image, url)
+        else:
+            vids.link_text(slide, vids.WATCH_LINE, url)
+
     for content in contents:
         label = f"Slide {content.page}"
         image = image_paths.get(content.page)
         kind = "image" if image else content.kind
+        if url := videos.get(content.page):
+            extra = {"notes": f"{content.notes.strip()}\n\nVideo: {url}".strip()}
+            if not vids.is_thumbnail(image):
+                extra["bullets"] = [*content.bullets, vids.WATCH_LINE]
+            content = content.model_copy(update=extra)
 
         if not infos:
             page_warnings: list[str] = []
             slide = _render_page(prs, originals, None, kind, content, image, label, page_warnings)
+            finish_video(slide, content, image)
             warnings += page_warnings
             if missing := missing_text(slide, content):
                 warnings.append(_missing_warning(label, missing))
@@ -692,6 +714,7 @@ def build_deck(
             if attempt is not best:
                 _delete_slide(prs, attempt[1])
         missing, slide, info, by_role, page_warnings = best
+        finish_video(slide, content, image)
         usage[info.index] += 1
         warnings += page_warnings
         if missing:
@@ -702,6 +725,10 @@ def build_deck(
                 f"Your style has no '{kind}' sample slide, so '{info.kind}' samples were used instead. "
                 f"Add a sample slide like that for better results."
             )
+
+    # Web addresses typed on the new slides become clickable.
+    for slide in list(prs.slides)[len(originals):]:
+        vids.link_urls(slide)
 
     # Drop the original sample slides, keep only the new ones.
     sld_id_lst = prs.slides._sldIdLst

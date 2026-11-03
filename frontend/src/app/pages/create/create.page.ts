@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { BuildSlide, GenerateRequest, Generation, SlideKind, SlideStyle, UploadedImage } from '../../core/models';
 import { SlideCanvas } from './slide-canvas';
+import { checkVideoLink, VideoLink } from '../../core/video-link';
 
 interface Row {
   key: number;
@@ -17,6 +18,10 @@ interface Row {
   role: string;
   /** Speaker notes from an imported lesson file. */
   notes: string;
+  /** Video link as typed (shown on the slide as a clickable thumbnail). */
+  video: string;
+  /** The video link box is open. */
+  videoOpen: boolean;
 }
 
 /** Shape of a lesson file: { title, slides: [{ page, title, bullets, role, notes }] } or just the slides array. */
@@ -27,6 +32,7 @@ interface LessonFileSlide {
   bullets?: unknown;
   role?: string;
   notes?: string;
+  video_url?: string;
 }
 
 const BULLET_MARK = /^\s*[-•*]\s+/;
@@ -82,7 +88,7 @@ export class CreatePage {
     return null;
   });
 
-  protected readonly filledRows = computed(() => this.rows().filter((r) => r.details.trim() || r.image));
+  protected readonly filledRows = computed(() => this.rows().filter((r) => r.details.trim() || r.image || r.video.trim()));
 
   protected readonly canSubmit = computed(
     () =>
@@ -90,6 +96,7 @@ export class CreatePage {
       this.filledRows().length > 0 &&
       !this.pageProblem() &&
       !this.rows().some((r) => r.uploading) &&
+      !this.rows().some((r) => this.videoError(r)) &&
       !this.generating(),
   );
 
@@ -105,7 +112,7 @@ export class CreatePage {
         topic: this.topic(),
         instructions: this.instructions(),
         exact: this.exact(),
-        rows: this.rows().map(({ page, details, image, role, notes }) => ({ page, details, image, role, notes })),
+        rows: this.rows().map(({ page, details, image, role, notes, video }) => ({ page, details, image, role, notes, video })),
       };
       try {
         localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -119,7 +126,7 @@ export class CreatePage {
 
   // ------------------------------------------------------------------ setup
   private blankRow(page: number): Row {
-    return { key: this.nextKey++, page, details: '', image: null, uploading: false, error: null, role: '', notes: '' };
+    return { key: this.nextKey++, page, details: '', image: null, uploading: false, error: null, role: '', notes: '', video: '', videoOpen: false };
   }
 
   private restoreDraft(): void {
@@ -140,6 +147,8 @@ export class CreatePage {
             image: r.image ?? null,
             role: r.role ?? '',
             notes: r.notes ?? '',
+            video: r.video ?? '',
+            videoOpen: !!r.video,
           })),
         );
       }
@@ -162,6 +171,21 @@ export class CreatePage {
     } finally {
       this.stylesLoaded.set(true);
     }
+  }
+
+  // ----------------------------------------------------------------- videos
+  protected video(r: Row): VideoLink | null {
+    const v = checkVideoLink(r.video);
+    return v && 'url' in v ? v : null;
+  }
+
+  protected videoError(r: Row): string | null {
+    const v = checkVideoLink(r.video);
+    return v && 'error' in v ? v.error : null;
+  }
+
+  protected closeVideo(key: number): void {
+    this.patch(key, { video: '', videoOpen: false });
   }
 
   // ------------------------------------------------------------------- rows
@@ -229,6 +253,8 @@ export class CreatePage {
           details: [sl.title ?? '', ...bullets].join('\n').trim(),
           role: typeof sl.role === 'string' ? sl.role : '',
           notes: typeof sl.notes === 'string' ? sl.notes : '',
+          video: typeof sl.video_url === 'string' ? sl.video_url : '',
+          videoOpen: typeof sl.video_url === 'string' && !!sl.video_url,
         };
       });
       for (const old of this.rows()) {
@@ -253,9 +279,12 @@ export class CreatePage {
         .filter(Boolean);
       const [title = '', ...bullets] = lines;
       let kind: SlideKind = 'content';
-      if (r.image) kind = 'image';
+      if (r.image || this.video(r)) kind = 'image';
       else if (!bullets.length) kind = i === 0 ? 'title' : 'section';
-      return { page: r.page, kind, title, bullets, notes: r.notes, role: r.role, image_id: r.image?.id ?? null };
+      return {
+        page: r.page, kind, title, bullets, notes: r.notes, role: r.role,
+        image_id: r.image?.id ?? null, video_url: this.video(r)?.url ?? null,
+      };
     });
   }
 
@@ -278,7 +307,9 @@ export class CreatePage {
       instructions: this.instructions().trim(),
       slides: [...this.filledRows()]
         .sort((a, b) => a.page - b.page)
-        .map((r) => ({ page: r.page, details: r.details.trim(), image_id: r.image?.id ?? null })),
+        .map((r) => ({
+          page: r.page, details: r.details.trim(), image_id: r.image?.id ?? null, video_url: this.video(r)?.url ?? null,
+        })),
     };
 
     try {
