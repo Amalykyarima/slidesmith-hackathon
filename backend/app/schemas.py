@@ -1,3 +1,4 @@
+import datetime as dt
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,8 @@ class GenerateRequest(BaseModel):
     topic: str = Field(default="", max_length=500)
     instructions: str = Field(default="", max_length=2000)
     slides: list[SlideSpec] = Field(min_length=1, max_length=40)
+    # Replaces the dates on the teacher's sample slides. Default: the next school day.
+    lesson_date: dt.date | None = None
 
 
 class SlideContent(BaseModel):
@@ -81,3 +84,4 @@ class BuildRequest(BaseModel):
     style_id: str
     title: str = Field(default="", max_length=200)
     slides: list[BuildSlide] = Field(min_length=1, max_length=40)
+    lesson_date: dt.date | None = None

@@ -42,6 +42,8 @@ export interface GenerateRequest {
   topic: string;
   instructions: string;
   slides: SlideSpec[];
+  /** yyyy-mm-dd */
+  lesson_date?: string;
 }
 
 export interface SlideContent {
@@ -70,6 +72,7 @@ export interface BuildRequest {
   style_id: string;
   title: string;
   slides: BuildSlide[];
+  lesson_date?: string;
 }
 
 export interface Generation {

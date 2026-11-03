@@ -4,7 +4,7 @@ One Docker service serves the API and the Angular app at one address, with HTTPS
 
 ## What the free plan means
 - **Sleeps after 15 minutes** without visits; the next visit takes about a minute to wake it.
-- **The disk is wiped** on every sleep, restart or deploy: uploaded style decks, pictures and
+- **The disk is wiped** on every sleep, restart or deploy (unless you set up Supabase storage below): uploaded style decks, pictures and
   generated decks disappear. Teachers re-upload their style deck after a sleep, and should
   download each deck when it's built.
 - **750 free hours a month** per workspace (enough for one service running all month).
@@ -24,6 +24,27 @@ One Docker service serves the API and the Angular app at one address, with HTTPS
    and run a lesson end to end.
 
 Every merge to `main` deploys automatically.
+
+## Keep teachers' work (free Supabase storage, no card)
+
+Without this, the free server's disk is wiped on every sleep and deploy: teachers lose their
+styles and decks. With it, SlideSmith saves everything to a private Supabase bucket every
+15 seconds (and on shutdown) and brings it all back when the server wakes.
+
+1. Sign up at https://supabase.com (free, no card) → **New project** (any name, a strong
+   database password you can forget, region **London** or **Frankfurt**).
+2. **Storage** → **New bucket** → name `slidesmith`, leave **Public bucket OFF** → Create.
+3. **Project Settings → API**: copy the **Project URL** and the **service_role** (secret) key.
+4. Render → the service → **Environment** → add `SUPABASE_URL` (the URL) and
+   `SUPABASE_SERVICE_KEY` (the secret key) → **Save, rebuild and deploy**.
+5. Check: open `https://<your-app>.onrender.com/api/health`. `"storage"` should say
+   `"mode": "supabase"`, and after an upload `"files"` goes up.
+
+The secret key can read and write everything in the project: keep it only in Render's
+environment, never in the code or chat. Free plan limits: 1 GB in total and 50 MB per file
+(style decks are capped at 40 MB). A free project pauses after a week with no requests;
+SlideSmith sends a tiny request once a day while it runs, and you can un-pause it from the
+Supabase dashboard if the school was closed for a holiday.
 
 ## Keep it awake during school hours (free, recommended)
 

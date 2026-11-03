@@ -123,7 +123,7 @@ def test_generated_slides_follow_the_style(tmp_path):
     runs = head.text_frame.paragraphs[0].runs
     assert [r.text.strip() for r in runs] == ["Alcohol", "", "5th Nov 2026"]
     assert runs[0].font.underline and not runs[1].font.underline and runs[2].font.underline
-    assert len(head.text_frame.text) == len("Nutrients" + " " * 40 + "24th Sep 2026")
+    assert abs(len(head.text_frame.text) - len("Nutrients" + " " * 40 + "24th Sep 2026")) <= 2  # date pushed right
 
     # Definition into the banner, application task into its box, the rest in the body.
     texts = {sh.text_frame.text for sh in vocab.shapes if sh.has_text_frame}

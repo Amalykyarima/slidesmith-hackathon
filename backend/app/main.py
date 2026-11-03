@@ -21,7 +21,7 @@ from .generator import build_deck
 from .previews import previews_available, render_into, render_previews
 from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile, style_roles
 from .schemas import BuildRequest, GenerateRequest, SlideContent, SlideEdits
-from . import scene, videos
+from . import scene, storage, videos
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("slidesmith")
@@ -32,9 +32,11 @@ ALLOWED_IMAGE_FORMATS = {"PNG", "JPEG", "GIF", "WEBP", "BMP", "MPO"}
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    storage.startup()  # bring back saved work before the database is opened
     db.init_db()
     log.info("AI mode: %s | previews: %s", "claude" if config.AI_ENABLED else "MOCK", previews_available())
     yield
+    storage.shutdown()  # last save before the server sleeps
 
 
 app = FastAPI(title="SlideSmith API", lifespan=lifespan)
@@ -180,6 +182,7 @@ def health():
         "model": config.CLAUDE_MODEL if config.AI_ENABLED else None,
         "previews_enabled": previews_available(),
         "auth_required": config.AUTH_ENABLED,
+        "storage": storage.status(),
     }
 
 
@@ -381,12 +384,13 @@ def _build_and_record(
     mode: str,
     background: BackgroundTasks,
     video_links: dict[int, str] | None = None,
+    lesson_date=None,
 ) -> dict:
     """Pour finished slide content into the style, save the deck, start previews."""
     gen_id = uuid.uuid4().hex[:12]
     out_path = config.OUTPUTS_DIR / f"{gen_id}.pptx"
     try:
-        warnings = build_deck(Path(style["path"]), contents, image_paths, out_path, deck_title=title, videos=video_links)
+        warnings = build_deck(Path(style["path"]), contents, image_paths, out_path, deck_title=title, videos=video_links, lesson_date=lesson_date)
     except Exception:  # noqa: BLE001
         log.exception("Deck generation failed")
         out_path.unlink(missing_ok=True)
@@ -446,7 +450,7 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
         log.exception("Anthropic API error")
         raise HTTPException(502, f"The AI service returned an error: {getattr(exc, 'message', exc)}")
 
-    return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, mode, background, video_links)
+    return _build_and_record(style, req.title, req.model_dump(mode="json"), contents, image_paths, mode, background, video_links, req.lesson_date)
 
 
 @app.post("/api/build", status_code=201)
@@ -460,7 +464,7 @@ def build_exact(req: BuildRequest, background: BackgroundTasks):
         SlideContent(**s.model_dump(exclude={"image_id", "video_url"}))
         for s in sorted(req.slides, key=lambda s: s.page)
     ]
-    return _build_and_record(style, req.title, req.model_dump(), contents, image_paths, "exact", background, video_links)
+    return _build_and_record(style, req.title, req.model_dump(mode="json"), contents, image_paths, "exact", background, video_links, req.lesson_date)
 
 
 # --------------------------------------------------------------------------- #
