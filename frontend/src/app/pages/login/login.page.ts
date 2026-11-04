@@ -31,7 +31,7 @@ import { AuthService } from '../../core/auth.service';
             autocomplete="current-password"
             autocapitalize="off"
             spellcheck="false"
-            placeholder="e.g. maple-42"
+            placeholder="e.g. melon-10"
             required
             autofocus
             [attr.aria-invalid]="!!error()"
