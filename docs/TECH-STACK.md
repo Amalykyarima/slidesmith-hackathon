@@ -1,0 +1,83 @@
+# SlideSmith tech stack
+
+Everything the hosted version (https://slidesmith-bzfm.onrender.com) is built and run with.
+All free except AI generation, which is paid per use. Versions are the ones the code asks for.
+
+## How it fits together
+
+```
+Teacher's browser ──► Angular app ──► FastAPI (Python) ──► python-pptx: clone her slides, fill text/pictures
+                                          │                LibreOffice: previews and editor backgrounds
+                                          ├──► Claude (Anthropic API): writes the slide text (AI mode)
+                                          ├──► SQLite + files on disk
+                                          └──► Supabase Storage: copy of the files, kept across server sleeps
+Everything runs in one Docker image on Render, rebuilt from GitHub on every merge to main.
+```
+
+## Hosting and accounts
+
+| Tool | What it does for SlideSmith | Link |
+|---|---|---|
+| GitHub | Private repo `Amalykyarima/slidesmith`; every change goes in through a pull request | https://github.com |
+| Render (free plan) | Runs the live app; redeploys automatically on every merge to `main`; settings in `render.yaml` | https://render.com |
+| Docker | Packs frontend, backend, LibreOffice and fonts into one image (`Dockerfile`) | https://www.docker.com |
+| Anthropic API (Claude Sonnet) | Writes slide text in AI mode; capped per teacher per day (`AI_DAILY_LIMIT`) | https://platform.claude.com |
+| Supabase Storage | Saves styles, pictures, decks and the database so they survive Render sleeps (`backend/app/storage.py`) | https://supabase.com |
+| cron-job.org (recommended) | Visits `/api/health` every 10 min in school hours so the server stays awake | https://cron-job.org |
+
+## Frontend: what teachers see (`frontend/`)
+
+| Tool | Version | Used for | Link |
+|---|---|---|---|
+| Angular | 21 | The whole interface: standalone components, signals, zoneless, lazy routes | https://angular.dev |
+| TypeScript | 5.9 | Language of the frontend | https://www.typescriptlang.org |
+| RxJS | 7.8 | HTTP calls to the backend | https://rxjs.dev |
+| Prettier | 3 | Code formatting | https://prettier.io |
+| Plain CSS | | Styling with CSS variables; no UI library | |
+
+## Backend: the engine (`backend/`)
+
+| Tool | Version | Used for | Link |
+|---|---|---|---|
+| Python | 3.12 (server) | Language of the backend | https://www.python.org |
+| FastAPI | 0.115+ | Web API: styles, images, generate/build, slide editor, sign-in | https://fastapi.tiangolo.com |
+| Uvicorn | 0.30+ | Web server that runs FastAPI | https://www.uvicorn.org |
+| Pydantic | 2.7+ | Checks every request and the AI's answer | https://docs.pydantic.dev |
+| python-pptx (+ lxml) | 1.0+ | Reads the teacher's deck, clones her sample slides, writes text, pictures, links and edits. The heart of SlideSmith | https://python-pptx.readthedocs.io |
+| Pillow | 10+ | Image handling and video thumbnails | https://python-pillow.org |
+| PyMuPDF | 1.24+ | Turns the preview PDF into slide pictures (in a separate process to save memory) | https://pymupdf.readthedocs.io |
+| SQLite | built into Python | Database: styles, images, generations, owners | https://www.sqlite.org |
+| Anthropic Python SDK | 0.40+ | Calls Claude with a forced `submit_slides` tool call | https://github.com/anthropics/anthropic-sdk-python |
+| python-multipart | 0.0.9+ | File uploads | https://github.com/Kludex/python-multipart |
+| python-dotenv | 1.0+ | Reads settings from `backend/.env` locally | https://github.com/theskumar/python-dotenv |
+| httpx | 0.27+ | Used by the tests' client | https://www.python-httpx.org |
+
+## Inside the server image
+
+| Tool | Used for | Link |
+|---|---|---|
+| LibreOffice Impress (headless) | Draws slide previews and the slide editor's backgrounds (pptx → pdf) | https://www.libreoffice.org |
+| Carlito, Caladea, DejaVu fonts + fontconfig | Metric-compatible stand-ins so Calibri, Cambria and Gill Sans decks render true to size (`deploy/fonts.conf`) | https://fonts.google.com/specimen/Carlito |
+
+## Building and testing
+
+| Tool | Used for | Link |
+|---|---|---|
+| GitHub Codespaces | Cloud development environment (`.devcontainer/`); runs where the Mac can't | https://github.com/features/codespaces |
+| Claude Code | Coding agent used to build and change SlideSmith | https://claude.com/claude-code |
+| pytest | Backend tests (71), run before every merge | https://docs.pytest.org |
+| Playwright + Chromium | Browser tests that click through the real app, desktop and phone sizes | https://playwright.dev |
+| GitHub CLI (`gh`) | Opening and merging pull requests | https://cli.github.com |
+| Git, Node.js 22, npm | Version control, frontend build | https://nodejs.org |
+
+## Settings on Render (Environment)
+
+| Key | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | Claude key; empty = demo mode (no AI) |
+| `ACCESS_CODES` | Teachers' sign-in codes, `Name:code, Name:code` |
+| `SECRET_KEY` | Signs the sign-in cookie (generated by Render) |
+| `CLAUDE_MODEL` | Which Claude model writes the text |
+| `PREVIEW_MAX_SLIDES` | Preview only the first N slides (memory limit) |
+| `AI_DAILY_LIMIT` | AI generations per teacher per day |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_BUCKET` | Saving work across sleeps (see [HOSTING.md](HOSTING.md)) |
