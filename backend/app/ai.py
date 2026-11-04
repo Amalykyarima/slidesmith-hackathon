@@ -1,7 +1,11 @@
 """Turns the teacher's rough notes into structured slide content.
 
-The model never touches PowerPoint. It only returns JSON (via a forced tool call),
-and `generator.py` pours that JSON into the teacher's own sample slides.
+The model never touches PowerPoint. It only returns JSON (by calling the strict
+`submit_slides` tool), and `generator.py` pours that JSON into the teacher's own sample slides.
+
+Newer models (Claude Sonnet 5.5, Fable 5.1) reject a forced tool call (`tool_choice`
+"tool"/"any") with a 400, so the tool is offered with `tool_choice: auto`, marked
+`strict` so the call always matches the schema, and the prompt asks for it.
 """
 from __future__ import annotations
 
@@ -38,6 +42,8 @@ Rules:
 - notes: 1-3 sentences of speaker notes the teacher can say aloud or use as a prompt for discussion. Leave empty if unnecessary.
 - Titles should be short (under 8 words) and must not end with a full stop.
 - Match the teacher's spelling conventions (e.g. British vs American) from their notes.
+
+Always answer by calling the submit_slides tool once, with every requested page. Do not reply with plain text.
 """
 
 TOOL = {
@@ -59,13 +65,19 @@ TOOL = {
                         "notes": {"type": "string"},
                         "role": {"type": "string", "enum": [*ROLES, ""]},
                     },
-                    "required": ["page", "kind", "title"],
+                    # Strict tools: every field present (empty when unused), nothing extra.
+                    "required": ["page", "kind", "title", "subtitle", "bullets", "notes", "role"],
+                    "additionalProperties": False,
                 },
             }
         },
         "required": ["slides"],
+        "additionalProperties": False,
     },
+    "strict": True,
 }
+
+NUDGE = "Please call the submit_slides tool now, with one entry for every requested page."
 
 
 def _encode_image(path: Path) -> dict:
@@ -133,20 +145,35 @@ def _clean(content: SlideContent, capacity: dict) -> SlideContent:
 
 
 def _call_claude(req: GenerateRequest, images: dict[int, Path], capacity: dict) -> list[SlideContent]:
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY, timeout=120)
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=8000,
-        system=SYSTEM_PROMPT,
-        tools=[TOOL],
-        tool_choice={"type": "tool", "name": "submit_slides"},
-        messages=[{"role": "user", "content": _build_user_content(req, images, capacity)}],
-    )
-    block = next((b for b in response.content if b.type == "tool_use"), None)
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY, timeout=240)
+    messages = [{"role": "user", "content": _build_user_content(req, images, capacity)}]
+    block = None
+    for attempt in range(2):
+        response = client.messages.create(
+            model=config.CLAUDE_MODEL,
+            max_tokens=16000,  # room for the model's own thinking plus the slides
+            system=SYSTEM_PROMPT,
+            tools=[TOOL],
+            tool_choice={"type": "auto"},
+            messages=messages,
+        )
+        block = next((b for b in response.content if getattr(b, "type", "") == "tool_use"
+                      and b.name == "submit_slides"), None)
+        if block is not None:
+            break
+        if getattr(response, "stop_reason", "") == "refusal":
+            raise RuntimeError("The AI declined to write these slides. Try rewording the notes.")
+        log.warning("Model answered without submit_slides (stop_reason=%s); asking again",
+                    getattr(response, "stop_reason", "?"))
+        # Keep the conversation append-only: its answer, then a reminder.
+        messages = [*messages, {"role": "assistant", "content": response.content},
+                    {"role": "user", "content": NUDGE}]
     if block is None:
-        raise RuntimeError("The model did not return slide content.")
+        raise RuntimeError("The AI did not return slide content. Please try again.")
     out: list[SlideContent] = []
     for raw in block.input.get("slides", []):
+        if isinstance(raw, dict):  # strict tools may differ in capitals only ("Content")
+            raw = {**raw, **{k: raw[k].strip().lower() for k in ("kind", "role") if isinstance(raw.get(k), str)}}
         try:
             out.append(SlideContent.model_validate(raw))
         except ValidationError:

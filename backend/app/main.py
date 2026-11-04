@@ -449,6 +449,8 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     except anthropic.APIError as exc:
         log.exception("Anthropic API error")
         raise HTTPException(502, f"The AI service returned an error: {getattr(exc, 'message', exc)}")
+    except RuntimeError as exc:  # the AI answered without slides, twice
+        raise HTTPException(502, str(exc))
 
     return _build_and_record(style, req.title, req.model_dump(mode="json"), contents, image_paths, mode, background, video_links, req.lesson_date)
 
