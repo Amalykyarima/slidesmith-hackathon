@@ -68,5 +68,5 @@ headings like "Turn and Talk" are recognised anyway. The API behind it is `POST 
 
 ## Hosting
 `Dockerfile` + `render.yaml` deploy SlideSmith to Render's free plan as one service with
-access-code sign-in. Step by step: [docs/HOSTING.md](docs/HOSTING.md). Locally nothing changes: without
+access-code sign-in. Step by step: [docs/HOSTING.md](docs/HOSTING.md). Every tool it is built with: [docs/TECH-STACK.md](docs/TECH-STACK.md). Locally nothing changes: without
 `ACCESS_CODES` there is no sign-in.
