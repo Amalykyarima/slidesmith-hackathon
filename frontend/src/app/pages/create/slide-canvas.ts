@@ -166,6 +166,7 @@ interface Gesture {
                     class="text-inner"
                     [attr.data-id]="p.id"
                     [attr.data-anchor]="p.anchor || 't'"
+                    [attr.data-wrap]="p.wrap || 'square'"
                     [attr.contenteditable]="editingId() === p.id ? 'true' : 'false'"
                     [style.padding]="pad(p)"
                     (input)="markText(p.id)"
@@ -257,8 +258,10 @@ interface Gesture {
     .piece img { width: 100%; height: 100%; display: block; pointer-events: none; }
     .text-inner {
       width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: visible;
-      line-height: 1.2; word-wrap: break-word; outline: none; color: #000;
+      line-height: 1.2; overflow-wrap: normal; word-break: normal; outline: none; color: #000;
     }
+    /* Like PowerPoint: a word is never split across lines; "Wrap text" off keeps one line. */
+    .text-inner[data-wrap='none'] { white-space: pre; }
     .text-inner[data-anchor='ctr'] { justify-content: center; }
     .text-inner[data-anchor='b'] { justify-content: flex-end; }
     .piece.editing .text-inner { user-select: text; -webkit-user-select: text; }
@@ -907,8 +910,20 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
+/** Free fonts drawn the same width as the Office fonts, so lines wrap where PowerPoint wraps them. */
+const TWINS: Record<string, string> = {
+  calibri: 'Carlito', 'calibri light': 'Carlito', cambria: 'Caladea', arial: 'Arimo', helvetica: 'Arimo',
+  'times new roman': 'Tinos', 'courier new': 'Cousine', 'gill sans': 'Carlito', 'gill sans mt': 'Carlito',
+};
+
+function fontStack(font: string): string {
+  const name = font.replace(/['\\]/g, '');
+  const twin = TWINS[name.toLowerCase()];
+  return `'${name}'${twin ? `, '${twin}'` : ''}, Carlito, sans-serif`;
+}
+
 function runStyle(r: SceneRun): string {
-  const font = r.font ? `font-family:'${r.font.replace(/['\\]/g, '')}', Carlito, Calibri, sans-serif;` : '';
+  const font = r.font ? `font-family:${fontStack(r.font)};` : '';
   return (
     `font-size:calc(var(--pt) * ${r.size});color:${r.color};font-weight:${r.bold ? 700 : 400};` +
     `font-style:${r.italic ? 'italic' : 'normal'};text-decoration-line:${r.underline ? 'underline' : 'none'};${font}`

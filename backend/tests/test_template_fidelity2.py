@@ -156,3 +156,40 @@ def test_exit_routine_is_kept_word_for_word(tmp_path):
     build_deck(style, [SlideContent(page=1, title="Exit", role="exit", bullets=["Something the AI wrote"])], {}, out)
     text = " ".join(sh.text_frame.text for sh in Presentation(str(out)).slides[0].shapes if sh.has_text_frame)
     assert "Lesson Exit Routines" in text and "Chairs tucked in neatly." in text and "AI wrote" not in text
+
+
+def test_empty_placeholders_are_not_left_on_new_slides(tmp_path):
+    prs = Presentation()  # the default "Title and Content" layout has two placeholders
+    s = prs.slides.add_slide(prs.slide_layouts[1])
+    s.placeholders[1].text_frame.text = "Index (noun): a sign or measure\nExample: the price index rose"
+    box = s.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(8), Inches(0.8)).text_frame
+    box.text = "Vocabulary"
+    style = tmp_path / "empty_title.pptx"
+    prs.save(style)
+    out = tmp_path / "o.pptx"
+    build_deck(style, [SlideContent(page=1, title="Current", bullets=["Current (noun): rate of flow of charge"])], {}, out)
+    slide = Presentation(str(out)).slides[0]
+    assert all(sh.text_frame.text.strip() for sh in slide.shapes if sh.is_placeholder and sh.has_text_frame)
+
+
+def test_numbered_lines_on_a_bulleted_slide_lose_the_bullet(tmp_path):
+    out = tmp_path / "n.pptx"
+    build_deck(lesson_deck(tmp_path), [SlideContent(page=1, title="Mini-whiteboard quiz", sample=3, bullets=[
+        "1. Which meter measures current?", "2. What is the unit of potential difference?"])], {}, out)
+    slide = Presentation(str(out)).slides[0]
+    body = next(sh for sh in slide.shapes if sh.has_text_frame and "Which meter" in sh.text_frame.text)
+    for p in body.text_frame.paragraphs:
+        ppr = p._p.find("{http://schemas.openxmlformats.org/drawingml/2006/main}pPr")
+        assert ppr is not None and ppr.find("{http://schemas.openxmlformats.org/drawingml/2006/main}buNone") is not None
+
+
+def test_long_lo_is_shrunk_to_its_strip(tmp_path):
+    from tests.test_whole_lesson import _labelled_style
+    out = tmp_path / "lo.pptx"
+    long_lo = ("How do current, potential difference and resistance work in circuits, "
+               "and how is mains electricity used safely at home?")
+    build_deck(_labelled_style(tmp_path), [SlideContent(page=1, title="Circuits", bullets=["a"], sample=1)], {}, out,
+               lesson_labels={"lo": long_lo})
+    shape = next(sh for sh in Presentation(str(out)).slides[0].shapes if sh.has_text_frame and sh.text_frame.text.startswith("LO:"))
+    sizes = [r.font.size.pt for p in shape.text_frame.paragraphs for r in p.runs if r.font.size]
+    assert sizes and max(sizes) < 10  # her 10pt line got smaller to fit

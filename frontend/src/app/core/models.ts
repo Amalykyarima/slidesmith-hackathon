@@ -140,6 +140,8 @@ export interface SceneShape {
   border?: { color: string; width: number } | null;
   anchor?: string;
   insets?: { l: number; t: number; r: number; b: number };
+  /** "none": the text stays on one line (PowerPoint's "Wrap text" off). */
+  wrap?: string;
   paragraphs?: SceneParagraph[];
   src?: string;
 }
