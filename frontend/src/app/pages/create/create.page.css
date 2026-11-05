@@ -87,3 +87,25 @@
 .title-row { display: grid; grid-template-columns: 1fr 220px; gap: 14px; align-items: start; }
 .title-row .hint { display: block; font-weight: 400; margin-top: 4px; }
 @media (max-width: 720px) { .title-row { grid-template-columns: 1fr; } }
+
+/* How to make the slides */
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 0 0 16px; }
+.mode {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start; text-align: left; cursor: pointer;
+  padding: 12px 14px; border: 1.5px solid var(--border); border-radius: 12px; background: #fff; font: inherit; color: inherit;
+}
+.mode:hover { border-color: var(--primary); }
+.mode.on { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 1px var(--primary) inset; }
+.mode:focus-visible { outline: 3px solid rgba(15, 118, 110, 0.35); outline-offset: 2px; }
+.lesson-panel { display: grid; grid-template-columns: 1fr 150px; gap: 14px; align-items: start; }
+.lesson-panel textarea { width: 100%; resize: vertical; }
+.lesson-panel .plan-note { grid-column: 1 / -1; margin: 0; }
+.template-pick { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.template-pick select { width: auto; max-width: 100%; padding-top: 6px; padding-bottom: 6px; font-size: 13px; }
+@media (max-width: 720px) {
+  .modes { grid-template-columns: 1fr; }
+  .lesson-panel { grid-template-columns: 1fr; }
+}
+.label-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 4px; }
+.label-row .label-note { grid-column: 1 / -1; margin: -6px 0 0; }
+@media (max-width: 720px) { .label-row { grid-template-columns: 1fr; } }

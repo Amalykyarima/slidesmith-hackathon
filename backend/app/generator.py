@@ -30,7 +30,7 @@ from .pptx_analysis import (
     resolve_pt,
     shape_by_id,
 )
-from .roles import ROLES, role_of, slot_key
+from .roles import LESSON_LABEL, ROLES, role_of, slot_key
 from .schemas import SlideContent
 
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -320,6 +320,32 @@ def _stop_above_bars(shape, slide) -> None:
             shape.height = other.top - top - Emu(45720)
 
 
+def _stop_before_badges(shape, slide) -> None:
+    """Her short heading ended before a small badge or icon on the same line ("You do"
+    climate badge, logo). A longer new heading would run underneath it: end the box
+    just before the first such picture to its right."""
+    try:
+        slide_w = slide.part.package.presentation_part.presentation.slide_width
+        left, top, width, height = shape.left, shape.top, shape.width, shape.height
+    except (AttributeError, TypeError):
+        return
+    if None in (left, top, width, height):
+        return
+    middle = top + height / 2
+    for other in slide.shapes:
+        if other.shape_id == shape.shape_id or None in (other.left, other.top, other.width, other.height):
+            continue
+        if getattr(other, "has_text_frame", False) and other.text_frame.text.strip():
+            continue  # text boxes are handled elsewhere; only pictures, icons and groups here
+        small = other.width < 0.2 * slide_w
+        on_line = other.top < middle < other.top + other.height or top <= other.top + other.height / 2 <= top + height
+        inside = left + 0.4 * width < other.left < left + width
+        if small and on_line and inside:
+            width = min(width, other.left - left - Emu(45720))
+    if width < shape.width:
+        shape.width = width
+
+
 def _grow_into_free_space(shape, slide) -> None:
     """Long text first uses empty space below its box (down to the next shape or the
     slide's bottom margin) before the font is shrunk."""
@@ -388,6 +414,8 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
         tx.append(p)
 
     indent = 0 if is_title else 18
+    if is_title:
+        _stop_before_badges(shape, slide)
     if not is_title:
         _stop_above_bars(shape, slide)
         if not _fit_pt(shape, lines, base_pt, base_pt, indent)[1]:
@@ -606,8 +634,87 @@ def _delete_slide(prs, slide) -> None:
             return
 
 
+def _label_kind(text: str) -> str | None:
+    """"lo" for an "LO: ..." / "Learning objective: ..." line, "keywords" for "Keywords: ...". """
+    m = LESSON_LABEL.match(text or "")
+    if not m:
+        return None
+    return "keywords" if m.group(1).lower().startswith("key") else "lo"
+
+
+def _value_box(slide, label_shape):
+    """A bare "LO:" box whose words sit in a separate box just to its right."""
+    try:
+        right, top, bottom = label_shape.left + label_shape.width, label_shape.top, label_shape.top + label_shape.height
+    except TypeError:
+        return None
+    for other in slide.shapes:
+        if other.shape_id == label_shape.shape_id or not other.has_text_frame or not other.text_frame.text.strip():
+            continue
+        if None in (other.left, other.top, other.height):
+            continue
+        if right - Emu(91440) <= other.left <= right + Emu(914400) and other.top < bottom and other.top + other.height > top:
+            return other
+    return None
+
+
+def _fill_label(shape, value: str) -> None:
+    """Keep her "LO:" / "Keywords:" label and its formatting; replace what follows it."""
+    paras = shape.text_frame._txBody.findall(qn("a:p"))
+    first = next((p for p in paras if ":" in _para_text(p) or "-" in _para_text(p)), paras[0])
+    runs = first.findall(qn("a:r"))
+    text, cut = "", None
+    for k, r in enumerate(runs):
+        t = r.find(qn("a:t"))
+        before = len(text)
+        text += t.text or ""
+        m = re.search(r"[:\-]", text)
+        if m and cut is None:
+            cut = k
+            keep = m.end() - before
+            t.text = (t.text or "")[:keep]
+    if cut is None or not runs:
+        _set_para_text(first, value)
+    else:
+        after = runs[cut + 1] if cut + 1 < len(runs) else None
+        if after is None:  # label and words were one run: copy it for the words, without bold
+            after = copy.deepcopy(runs[cut])
+            rpr = after.find(qn("a:rPr"))
+            if rpr is not None and rpr.get("b") == "1":
+                rpr.set("b", "0")
+            runs[cut].addnext(after)
+        after.find(qn("a:t")).text = " " + value
+        for extra in runs[cut + 2:]:
+            first.remove(extra)
+    for p in paras:  # one line only
+        if p is not first:
+            shape.text_frame._txBody.remove(p)
+
+
+def _apply_lesson_labels(slide, shape, labels: dict[str, str]) -> bool:
+    """Her LO / Keywords strip gets the new lesson's words. False = nothing to put there."""
+    kind = _label_kind(_text_of(shape))
+    value = (labels or {}).get(kind or "", "").strip()
+    if not value:
+        return False
+    after_label = re.sub(r"^\s*[^:\-]*[:\-]\s*", "", _text_of(shape)).strip()
+    partner = _value_box(slide, shape) if not after_label else None
+    if partner is not None:
+        _set_para_text(partner.text_frame._txBody.findall(qn("a:p"))[0], value)
+        for p in partner.text_frame._txBody.findall(qn("a:p"))[1:]:
+            partner.text_frame._txBody.remove(p)
+    else:
+        _fill_label(shape, value)
+    return True
+
+
+def _text_of(shape) -> str:
+    return shape.text_frame.text if getattr(shape, "has_text_frame", False) else ""
+
+
 def _render_page(prs, originals, info: SlideInfo | None, kind: str, content: SlideContent,
-                 image: Path | None, label: str, warnings: list[str], lesson: dt.date | None = None):
+                 image: Path | None, label: str, warnings: list[str], lesson: dt.date | None = None,
+                 labels: dict[str, str] | None = None):
     """Clone the sample (or a layout), place the picture, then fill the text."""
     bullets = list(content.bullets)
     slot_lines: dict[int, str] = {}
@@ -636,8 +743,15 @@ def _render_page(prs, originals, info: SlideInfo | None, kind: str, content: Sli
             if sid in slot_lines:
                 continue
             stale = shape_by_id(slide, sid)
-            if stale is not None:
-                stale._element.getparent().remove(stale._element)
+            if stale is None:
+                continue
+            if _label_kind(_text_of(stale)):
+                if _apply_lesson_labels(slide, stale, labels or {}):
+                    continue  # her LO / Keywords strip, now about this lesson
+                partner = _value_box(slide, stale)  # the old lesson's words beside a bare "LO:"
+                if partner is not None and partner.shape_id not in (info.title_id, info.body_id):
+                    partner._element.getparent().remove(partner._element)
+            stale._element.getparent().remove(stale._element)
     else:
         target = _layout_target(prs, kind)
         slide = target.slide
@@ -695,6 +809,7 @@ def build_deck(
     deck_title: str = "",
     videos: dict[int, str] | None = None,
     lesson_date: dt.date | None = None,
+    lesson_labels: dict[str, str] | None = None,
 ) -> list[str]:
     """`videos`: page -> video link. When that page's picture is the video's thumbnail
     (videos.thumbnail), clicking the picture opens the video; when the teacher also gave
@@ -731,7 +846,7 @@ def build_deck(
 
         if not infos:
             page_warnings: list[str] = []
-            slide = _render_page(prs, originals, None, kind, content, image, label, page_warnings, lesson)
+            slide = _render_page(prs, originals, None, kind, content, image, label, page_warnings, lesson, lesson_labels)
             finish_video(slide, content, image)
             warnings += page_warnings
             if missing := missing_text(slide, content):
@@ -739,11 +854,15 @@ def build_deck(
             continue
 
         # Try the best samples in turn until one shows every line of the page.
-        candidates = rank_exemplars(infos, kind, usage, page_role(content), needs_body=bool(content.bullets))
+        chosen = next((i for i in infos if content.sample and i.index == content.sample - 1 and not i.complex), None)
+        role = page_role(content) or (chosen.role if chosen else None)
+        candidates = rank_exemplars(infos, kind, usage, role, needs_body=bool(content.bullets))
+        if chosen is not None:  # the teacher (or the AI) named her slide: try it first
+            candidates = [(chosen, True)] + [c for c in candidates if c[0] is not chosen]
         attempts = []  # (missing, slide, info, by_role, page_warnings)
         for info, by_role in candidates[:MAX_ATTEMPTS]:
             page_warnings = []
-            slide = _render_page(prs, originals, info, kind, content, image, label, page_warnings, lesson)
+            slide = _render_page(prs, originals, info, kind, content, image, label, page_warnings, lesson, lesson_labels)
             missing = missing_text(slide, content)
             attempts.append((missing, slide, info, by_role, page_warnings))
             if not missing:

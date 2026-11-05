@@ -19,7 +19,9 @@ from . import ai, auth, config, db
 from .auth import owner
 from .generator import build_deck
 from .previews import previews_available, render_into, render_previews
-from .pptx_analysis import analyze_presentation, content_capacity, extract_style_profile, style_roles
+from .pptx_analysis import (
+    analyze_presentation, content_capacity, extract_style_profile, style_roles, template_catalogue,
+)
 from .schemas import BuildRequest, GenerateRequest, SlideContent, SlideEdits
 from . import scene, storage, videos
 
@@ -341,6 +343,11 @@ def _load_style(style_id: str) -> dict:
     return style
 
 
+def _labels(req, from_ai: dict) -> dict[str, str]:
+    """Her LO / Keywords lines: what the teacher typed wins, else what the AI wrote."""
+    return {k: (getattr(req, k, "") or "").strip() or from_ai.get(k, "") for k in ("lo", "keywords")}
+
+
 def _check_pages(pages: list[int]) -> None:
     if len(set(pages)) != len(pages):
         raise HTTPException(400, "Each slide needs a different page number.")
@@ -385,12 +392,14 @@ def _build_and_record(
     background: BackgroundTasks,
     video_links: dict[int, str] | None = None,
     lesson_date=None,
+    lesson_labels: dict[str, str] | None = None,
 ) -> dict:
     """Pour finished slide content into the style, save the deck, start previews."""
     gen_id = uuid.uuid4().hex[:12]
     out_path = config.OUTPUTS_DIR / f"{gen_id}.pptx"
     try:
-        warnings = build_deck(Path(style["path"]), contents, image_paths, out_path, deck_title=title, videos=video_links, lesson_date=lesson_date)
+        warnings = build_deck(Path(style["path"]), contents, image_paths, out_path, deck_title=title, videos=video_links, lesson_date=lesson_date,
+                               lesson_labels=lesson_labels)
     except Exception:  # noqa: BLE001
         log.exception("Deck generation failed")
         out_path.unlink(missing_ok=True)
@@ -426,7 +435,8 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
 
     prs = Presentation(str(Path(style["path"])))
     infos = analyze_presentation(prs)
-    capacity = {**content_capacity(prs, infos), "roles": style_roles(prs, infos)}
+    capacity = {**content_capacity(prs, infos), "roles": style_roles(prs, infos),
+                "catalogue": template_catalogue(prs, infos)}
 
     if config.AI_ENABLED and config.AI_DAILY_LIMIT:
         used = db.one(
@@ -441,7 +451,8 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
             )
 
     try:
-        contents, mode = ai.generate_content(req, image_paths, capacity)
+        extras: dict[str, str] = {}
+        contents, mode = ai.generate_content(req, image_paths, capacity, extras)
     except anthropic.AuthenticationError:
         raise HTTPException(502, "The Anthropic API key was rejected. Check ANTHROPIC_API_KEY in backend/.env.")
     except anthropic.RateLimitError:
@@ -452,7 +463,8 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     except RuntimeError as exc:  # the AI answered without slides, twice
         raise HTTPException(502, str(exc))
 
-    return _build_and_record(style, req.title, req.model_dump(mode="json"), contents, image_paths, mode, background, video_links, req.lesson_date)
+    return _build_and_record(style, req.title, req.model_dump(mode="json"), contents, image_paths, mode, background, video_links, req.lesson_date,
+                             _labels(req, extras))
 
 
 @app.post("/api/build", status_code=201)
@@ -466,7 +478,8 @@ def build_exact(req: BuildRequest, background: BackgroundTasks):
         SlideContent(**s.model_dump(exclude={"image_id", "video_url"}))
         for s in sorted(req.slides, key=lambda s: s.page)
     ]
-    return _build_and_record(style, req.title, req.model_dump(mode="json"), contents, image_paths, "exact", background, video_links, req.lesson_date)
+    return _build_and_record(style, req.title, req.model_dump(mode="json"), contents, image_paths, "exact", background, video_links, req.lesson_date,
+                             _labels(req, {}))
 
 
 # --------------------------------------------------------------------------- #

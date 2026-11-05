@@ -1,7 +1,7 @@
 import datetime as dt
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 SlideKind = Literal["title", "content", "image", "section"]
 
@@ -13,6 +13,8 @@ class SlideSpec(BaseModel):
     details: str = Field(default="", max_length=4000)
     image_id: str | None = None
     video_url: str | None = Field(default=None, max_length=500)  # shown as a clickable thumbnail
+    # Which of her template's slides to copy (1-based slide number). None = SlideSmith chooses.
+    sample: int | None = Field(default=None, ge=1, le=500)
 
 
 class GenerateRequest(BaseModel):
@@ -20,9 +22,25 @@ class GenerateRequest(BaseModel):
     title: str = Field(default="", max_length=200)
     topic: str = Field(default="", max_length=500)
     instructions: str = Field(default="", max_length=2000)
-    slides: list[SlideSpec] = Field(min_length=1, max_length=40)
+    slides: list[SlideSpec] = Field(default_factory=list, max_length=40)
     # Replaces the dates on the teacher's sample slides. Default: the next school day.
     lesson_date: dt.date | None = None
+    # Whole-lesson mode (no slides listed): the AI plans `slide_count` slides from this brief.
+    brief: str = Field(default="", max_length=4000)
+    slide_count: int | None = Field(default=None, ge=2, le=30)
+    # Her "LO:" and "Keywords:" strips. Empty = the AI writes them.
+    lo: str = Field(default="", max_length=300)
+    keywords: str = Field(default="", max_length=300)
+
+    @model_validator(mode="after")
+    def _slides_or_brief(self):
+        if not self.slides and not (self.slide_count and self.brief.strip()):
+            raise ValueError("Add notes for at least one slide, or give a topic and a number of slides.")
+        return self
+
+    @property
+    def whole_lesson(self) -> bool:
+        return not self.slides
 
 
 class SlideContent(BaseModel):
@@ -36,6 +54,8 @@ class SlideContent(BaseModel):
     notes: str = ""
     # Routine slide this page should copy (see roles.py), e.g. "retrieval". Empty = ordinary slide.
     role: str = ""
+    # Her template slide to copy (1-based). None = the best match.
+    sample: int | None = Field(default=None, ge=1, le=500)
 
 
 class BuildSlide(SlideContent):
@@ -85,3 +105,5 @@ class BuildRequest(BaseModel):
     title: str = Field(default="", max_length=200)
     slides: list[BuildSlide] = Field(min_length=1, max_length=40)
     lesson_date: dt.date | None = None
+    lo: str = Field(default="", max_length=300)
+    keywords: str = Field(default="", max_length=300)

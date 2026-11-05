@@ -9,6 +9,8 @@ export interface StyleProfile {
   background_tone: 'dark' | 'light' | 'image';
   kinds: Record<string, number>;
   capacity: { max_bullets: number; max_words_per_bullet: number };
+  /** Her sample slides, in order (index is 0-based). */
+  exemplars?: { index: number; kind: string; preview_text: string; role: string | null; complex: boolean }[];
 }
 
 export interface SlideStyle {
@@ -34,6 +36,8 @@ export interface SlideSpec {
   details: string;
   image_id: string | null;
   video_url?: string | null;
+  /** Her template slide to copy (1-based); null = SlideSmith chooses. */
+  sample?: number | null;
 }
 
 export interface GenerateRequest {
@@ -44,6 +48,12 @@ export interface GenerateRequest {
   slides: SlideSpec[];
   /** yyyy-mm-dd */
   lesson_date?: string;
+  /** Whole lesson: no slides listed, the AI plans `slide_count` slides from `brief`. */
+  brief?: string;
+  slide_count?: number;
+  /** Her "LO:" / "Keywords:" lines. Empty = the AI writes them. */
+  lo?: string;
+  keywords?: string;
 }
 
 export interface SlideContent {
@@ -66,6 +76,8 @@ export interface BuildSlide {
   role: string;
   image_id: string | null;
   video_url?: string | null;
+  /** Her template slide to copy (1-based); null = SlideSmith chooses. */
+  sample?: number | null;
 }
 
 export interface BuildRequest {
@@ -73,6 +85,8 @@ export interface BuildRequest {
   title: string;
   slides: BuildSlide[];
   lesson_date?: string;
+  lo?: string;
+  keywords?: string;
 }
 
 export interface Generation {

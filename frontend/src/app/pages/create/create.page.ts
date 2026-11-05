@@ -20,6 +20,8 @@ interface Row {
   notes: string;
   /** Video link as typed (shown on the slide as a clickable thumbnail). */
   video: string;
+  /** Her template slide to use (1-based), or null for the best match. */
+  sample: number | null;
   /** The video link box is open. */
   videoOpen: boolean;
 }
@@ -33,9 +35,12 @@ interface LessonFileSlide {
   role?: string;
   notes?: string;
   video_url?: string;
+  sample?: number;
 }
 
 const BULLET_MARK = /^\s*[-•*]\s+/;
+
+type Mode = 'lesson' | 'slides' | 'exact';
 
 const DRAFT_KEY = 'slidesmith.draft.v1';
 
@@ -64,10 +69,33 @@ export class CreatePage {
   );
   protected readonly nextSchoolDay = nextSchoolDay;
   protected readonly topic = signal('');
+  /** Her "LO:" and "Keywords:" lines on every slide. Empty = the AI writes them. */
+  protected readonly lo = signal('');
+  protected readonly keywords = signal('');
   protected readonly instructions = signal('');
   protected readonly rows = signal<Row[]>([this.blankRow(1)]);
-  /** On: each page's first line is the title and every further line a bullet, built without the AI. */
-  protected readonly exact = signal(false);
+  /** lesson: the AI writes the whole lesson from a topic · slides: AI, slide by slide ·
+   *  exact: each page's first line is the title and every further line a bullet, no AI. */
+  protected readonly mode = signal<Mode>('slides');
+  protected readonly exact = computed(() => this.mode() === 'exact');
+  /** Whole-lesson mode: what the lesson is about, and how many slides. */
+  protected readonly brief = signal('');
+  protected readonly slideCount = signal(10);
+
+  /** Her template's slides, for the per-slide "Template slide" picker. */
+  protected readonly templateSlides = computed(() =>
+    (this.selectedStyle()?.profile.exemplars ?? [])
+      .filter((e) => !e.complex)
+      .map((e) => {
+        const heading = (e.preview_text || '').replace(/\s+/g, ' ').trim();
+        const role = e.role ? this.roleLabel(e.role) : '';
+        // Lead with her routine ("Retrieval: Refraction of Light") unless the heading already says it.
+        const text = role && !heading.toLowerCase().includes(role.toLowerCase().split(' ')[0])
+          ? (heading ? `${role}: ${heading}` : role)
+          : heading || role || e.kind;
+        return { number: e.index + 1, label: `${e.index + 1} · ${text.length > 52 ? text.slice(0, 51) + '…' : text}` };
+      }),
+  );
   protected readonly notice = signal<string | null>(null);
 
   protected readonly generating = signal(false);
@@ -77,6 +105,12 @@ export class CreatePage {
   protected readonly progressNote = computed(() => {
     const t = this.elapsed();
     if (this.exact()) return t < 6 ? 'Putting your text into the style…' : 'Almost done…';
+    if (this.mode() === 'lesson') {
+      if (t < 5) return 'Sending your topic…';
+      if (t < 50) return 'Planning the lesson and writing every slide…';
+      if (t < 80) return 'Putting it into your style…';
+      return 'Still working: a whole lesson takes a little longer.';
+    }
     if (t < 4) return 'Sending your notes…';
     if (t < 35) return 'Writing the text for each slide…';
     if (t < 60) return 'Putting it into your style…';
@@ -96,10 +130,14 @@ export class CreatePage {
 
   protected readonly filledRows = computed(() => this.rows().filter((r) => r.details.trim() || r.image || r.video.trim()));
 
+  protected readonly lessonReady = computed(
+    () => this.brief().trim().length > 0 && this.slideCount() >= 2 && this.slideCount() <= 30,
+  );
+
   protected readonly canSubmit = computed(
     () =>
       !!this.styleId() &&
-      this.filledRows().length > 0 &&
+      (this.mode() === 'lesson' ? this.lessonReady() : this.filledRows().length > 0) &&
       !this.pageProblem() &&
       !this.rows().some((r) => r.uploading) &&
       !this.rows().some((r) => this.videoError(r)) &&
@@ -117,9 +155,13 @@ export class CreatePage {
         title: this.title(),
         topic: this.topic(),
         instructions: this.instructions(),
-        exact: this.exact(),
+        mode: this.mode(),
+        lo: this.lo(),
+        keywords: this.keywords(),
+        brief: this.brief(),
+        slideCount: this.slideCount(),
         lessonDate: this.lessonDate(),
-        rows: this.rows().map(({ page, details, image, role, notes, video }) => ({ page, details, image, role, notes, video })),
+        rows: this.rows().map(({ page, details, image, role, notes, video, sample }) => ({ page, details, image, role, notes, video, sample })),
       };
       try {
         localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -133,7 +175,7 @@ export class CreatePage {
 
   // ------------------------------------------------------------------ setup
   private blankRow(page: number): Row {
-    return { key: this.nextKey++, page, details: '', image: null, uploading: false, error: null, role: '', notes: '', video: '', videoOpen: false };
+    return { key: this.nextKey++, page, details: '', image: null, uploading: false, error: null, role: '', notes: '', video: '', videoOpen: false, sample: null };
   }
 
   private restoreDraft(): void {
@@ -145,7 +187,11 @@ export class CreatePage {
       this.title.set(d.title ?? '');
       this.topic.set(d.topic ?? '');
       this.instructions.set(d.instructions ?? '');
-      this.exact.set(!!d.exact);
+      this.mode.set(d.mode === 'lesson' || d.mode === 'slides' || d.mode === 'exact' ? d.mode : d.exact ? 'exact' : 'slides');
+      if (typeof d.brief === 'string') this.brief.set(d.brief);
+      if (typeof d.lo === 'string') this.lo.set(d.lo);
+      if (typeof d.keywords === 'string') this.keywords.set(d.keywords);
+      if (Number.isInteger(d.slideCount)) this.slideCount.set(Math.min(30, Math.max(2, d.slideCount)));
       // A date from an old draft that has already passed falls back to the next school day.
       if (typeof d.lessonDate === 'string' && d.lessonDate >= isoDay(new Date())) this.lessonDate.set(d.lessonDate);
       if (Array.isArray(d.rows) && d.rows.length) {
@@ -158,6 +204,7 @@ export class CreatePage {
             notes: r.notes ?? '',
             video: r.video ?? '',
             videoOpen: !!r.video,
+            sample: Number.isInteger(r.sample) ? r.sample : null,
           })),
         );
       }
@@ -263,6 +310,7 @@ export class CreatePage {
           role: typeof sl.role === 'string' ? sl.role : '',
           notes: typeof sl.notes === 'string' ? sl.notes : '',
           video: typeof sl.video_url === 'string' ? sl.video_url : '',
+          sample: Number.isInteger(sl.sample) ? (sl.sample as number) : null,
           videoOpen: typeof sl.video_url === 'string' && !!sl.video_url,
         };
       });
@@ -271,7 +319,7 @@ export class CreatePage {
       }
       this.rows.set(rows);
       if (!Array.isArray(data) && typeof data.title === 'string') this.title.set(data.title);
-      this.exact.set(true);
+      this.mode.set('exact');
       this.notice.set(`Loaded ${rows.length} ${rows.length === 1 ? 'slide' : 'slides'} from ${file.name}. Your text will be used exactly as written.`);
     } catch {
       this.error.set(`${file.name} isn't a lesson file SlideSmith can read. It needs a "slides" list with a title and bullets for each page.`);
@@ -292,7 +340,7 @@ export class CreatePage {
       else if (!bullets.length) kind = i === 0 ? 'title' : 'section';
       return {
         page: r.page, kind, title, bullets, notes: r.notes, role: r.role,
-        image_id: r.image?.id ?? null, video_url: this.video(r)?.url ?? null,
+        image_id: r.image?.id ?? null, video_url: this.video(r)?.url ?? null, sample: r.sample,
       };
     });
   }
@@ -313,19 +361,27 @@ export class CreatePage {
       style_id: styleId,
       title: this.title().trim(),
       lesson_date: this.lessonDate(),
+      lo: this.lo().trim(),
+      keywords: this.keywords().trim(),
       topic: this.topic().trim(),
       instructions: this.instructions().trim(),
-      slides: [...this.filledRows()]
-        .sort((a, b) => a.page - b.page)
-        .map((r) => ({
-          page: r.page, details: r.details.trim(), image_id: r.image?.id ?? null, video_url: this.video(r)?.url ?? null,
-        })),
+      slides:
+        this.mode() === 'lesson'
+          ? []
+          : [...this.filledRows()]
+              .sort((a, b) => a.page - b.page)
+              .map((r) => ({
+                page: r.page, details: r.details.trim(), image_id: r.image?.id ?? null,
+                video_url: this.video(r)?.url ?? null, sample: r.sample,
+              })),
+      ...(this.mode() === 'lesson' ? { brief: this.brief().trim(), slide_count: this.slideCount() } : {}),
     };
 
     try {
       const generation = await firstValueFrom(
         this.exact()
-          ? this.api.build({ style_id: styleId, title: request.title, slides: this.toExactSlides(), lesson_date: this.lessonDate() })
+          ? this.api.build({ style_id: styleId, title: request.title, slides: this.toExactSlides(), lesson_date: this.lessonDate(),
+              lo: this.lo().trim(), keywords: this.keywords().trim() })
           : this.api.generate(request),
       );
       this.result.set(generation);
@@ -392,6 +448,18 @@ export class CreatePage {
   }
 
   protected selectedStyle = computed(() => this.styles().find((s) => s.id === this.styleId()) ?? null);
+
+  /** A different style has different template slides: clear the per-slide choices. */
+  protected chooseStyle(id: string): void {
+    if (id === this.styleId()) return;
+    this.styleId.set(id);
+    this.rows.update((rows) => rows.map((r) => ({ ...r, sample: null })));
+  }
+
+  protected setSlideCount(value: string): void {
+    const n = Math.round(Number(value));
+    if (Number.isFinite(n)) this.slideCount.set(Math.min(30, Math.max(2, n)));
+  }
 }
 
 function preloadImage(url: string): Promise<void> {
