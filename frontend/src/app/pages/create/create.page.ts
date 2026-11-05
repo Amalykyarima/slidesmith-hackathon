@@ -85,7 +85,7 @@ export class CreatePage {
   /** Her template's slides, for the per-slide "Template slide" picker. */
   protected readonly templateSlides = computed(() =>
     (this.selectedStyle()?.profile.exemplars ?? [])
-      .filter((e) => !e.complex)
+      .filter((e) => !e.complex && !(this.selectedStyle()?.excluded ?? []).includes(e.index + 1))
       .map((e) => {
         const heading = (e.preview_text || '').replace(/\s+/g, ' ').trim();
         const role = e.role ? this.roleLabel(e.role) : '';
@@ -359,7 +359,8 @@ export class CreatePage {
 
     const request: GenerateRequest = {
       style_id: styleId,
-      title: this.title().trim(),
+      // A whole lesson is named after its topic, never an old title left in the box.
+      title: this.mode() === 'lesson' ? '' : this.title().trim(),
       lesson_date: this.lessonDate(),
       lo: this.lo().trim(),
       keywords: this.keywords().trim(),
@@ -385,6 +386,7 @@ export class CreatePage {
           : this.api.generate(request),
       );
       this.result.set(generation);
+      this.previewsSlow.set(false);
       this.pollPreviews(generation.id, 0);
       setTimeout(() => document.getElementById('result')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
     } catch (err) {
@@ -395,10 +397,30 @@ export class CreatePage {
     }
   }
 
+  /** Previews took longer than we wait for (offer to try again). */
+  protected readonly previewsSlow = signal(false);
+
+  protected async retryPreviews(): Promise<void> {
+    const r = this.result();
+    if (!r) return;
+    this.previewsSlow.set(false);
+    try {
+      this.result.set(await firstValueFrom(this.api.redrawPreviews(r.id)));
+      clearTimeout(this.pollTimer);
+      this.pollPreviews(r.id, 0);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    }
+  }
+
   private pollPreviews(id: string, attempt: number): void {
     const current = this.result();
     const busy = current?.preview_status === 'pending' || !!current?.updating?.length;
-    if (!current || current.id !== id || !busy || attempt > 90) return;
+    if (!current || current.id !== id || !busy) return;
+    if (attempt > 120) {
+      this.previewsSlow.set(true);
+      return;
+    }
     this.pollTimer = setTimeout(async () => {
       try {
         const fresh = await firstValueFrom(this.api.getGeneration(id));
@@ -426,6 +448,10 @@ export class CreatePage {
     this.title.set('');
     this.topic.set('');
     this.instructions.set('');
+    this.brief.set('');
+    this.lo.set('');
+    this.keywords.set('');
+    this.previewsSlow.set(false);
     this.notice.set(null);
     this.rows.set([this.blankRow(1)]);
     window.scrollTo({ top: 0, behavior: 'smooth' });

@@ -59,10 +59,17 @@
   </div>
   <div class="stack">
     <div class="title-row">
-      <label class="field">
-        Deck title
-        <input class="input" [(ngModel)]="title" maxlength="200" placeholder="e.g. Cells and Photosynthesis" />
-      </label>
+      @if (mode() === 'lesson') {
+        <div class="field">
+          Deck title
+          <p class="muted small named-note">Named after your topic (step 3).</p>
+        </div>
+      } @else {
+        <label class="field">
+          Deck title
+          <input class="input" [(ngModel)]="title" maxlength="200" placeholder="e.g. Cells and Photosynthesis" />
+        </label>
+      }
       <label class="field">
         Lesson date
         <input class="input" type="date" [ngModel]="lessonDate()" (ngModelChange)="lessonDate.set($event || nextSchoolDay())" required />
@@ -374,9 +381,20 @@
                 <span class="edit-chip">Edit</span>
               }
             </button>
-            <figcaption class="small muted">{{ r.slides[i]?.page ? 'Page ' + r.slides[i].page : '' }}</figcaption>
+            <figcaption class="small muted">{{ 'Page ' + (r.slides[i]?.page || i + 1) }}</figcaption>
           </figure>
         }
+      </div>
+    } @else if (r.preview_status === 'failed' || previewsSlow()) {
+      <div class="alert alert-warn preview-problem" role="status">
+        <span>
+          {{ r.preview_status === 'failed' ? "We couldn't draw the previews for this deck." : 'The previews are taking longer than usual.' }}
+          Your download is ready either way.
+        </span>
+        <span class="preview-actions">
+          <button type="button" class="btn btn-sm" (click)="retryPreviews()">Try again</button>
+          <button type="button" class="btn btn-sm" (click)="editingSlide.set(1)">Edit slides anyway</button>
+        </span>
       </div>
     } @else if (r.preview_status === 'pending') {
       <p class="muted small"><span class="spinner"></span> Rendering previews… you can already download the file.</p>

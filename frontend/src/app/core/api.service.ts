@@ -27,6 +27,11 @@ export class ApiService {
     return this.http.patch<SlideStyle>(`/api/styles/${id}`, { name });
   }
 
+  /** Which of her sample slides SlideSmith must never copy (1-based slide numbers). */
+  setExcludedSlides(id: string, excluded: number[]): Observable<SlideStyle> {
+    return this.http.patch<SlideStyle>(`/api/styles/${id}`, { excluded });
+  }
+
   deleteStyle(id: string): Observable<void> {
     return this.http.delete<void>(`/api/styles/${id}`);
   }
@@ -65,6 +70,10 @@ export class ApiService {
 
   getGeneration(id: string): Observable<Generation> {
     return this.http.get<Generation>(`/api/generations/${id}`);
+  }
+
+  redrawPreviews(id: string): Observable<Generation> {
+    return this.http.post<Generation>(`/api/generations/${id}/previews`, {});
   }
 }
 

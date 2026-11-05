@@ -59,6 +59,7 @@ def init_db() -> None:
         added = [(t, "owner TEXT NOT NULL DEFAULT ''") for t in ("styles", "images", "generations")]
         added.append(("generations", "rev INTEGER NOT NULL DEFAULT 0"))
         added.append(("generations", "slide_revs TEXT NOT NULL DEFAULT '{}'"))  # per-slide thumbnail versions
+        added.append(("styles", "excluded TEXT NOT NULL DEFAULT '[]'"))  # her sample slides never to copy
         for table, column in added:
             try:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")

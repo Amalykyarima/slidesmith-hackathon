@@ -109,3 +109,6 @@
 .label-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 4px; }
 .label-row .label-note { grid-column: 1 / -1; margin: -6px 0 0; }
 @media (max-width: 720px) { .label-row { grid-template-columns: 1fr; } }
+.preview-problem { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 6px 0 0; }
+.preview-actions { display: flex; gap: 8px; }
+.named-note { margin: 10px 0 0; font-weight: 400; }

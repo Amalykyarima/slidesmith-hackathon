@@ -43,6 +43,7 @@ Rules:
 - If an image is attached, look at it and write text that fits what it actually shows (labels, key points, a question about it). Do not describe the image literally unless the teacher asks.
 - notes: 1-3 sentences of speaker notes the teacher can say aloud or use as a prompt for discussion. Leave empty if unnecessary.
 - Titles should be short (under 8 words) and must not end with a full stop.
+- deck_title: a short name for this lesson's deck, from what the lesson is actually about (e.g. "Electricity: circuits and mains safety"). Base it on the topic and notes, never on anything else.
 - lo: the lesson's learning objective, written the way her template writes it (often a short question, e.g. "How does light change direction?"). keywords: the lesson's key terms, comma-separated (e.g. "Refraction, Normal, Critical angle"). They fill her "LO:" and "Keywords:" lines on every slide.
 - Whole lesson (no pages listed, only a topic): plan a complete lesson of exactly the requested number of slides, pages numbered from 1, following the order of her template (her own lessons run in that order): skip template slides that don't fit, and use her teaching slides more than once for the main content. Every slide gets real content for the topic.
 - Match the teacher's spelling conventions (e.g. British vs American) from their notes.
@@ -56,6 +57,7 @@ TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
+            "deck_title": {"type": "string"},
             "lo": {"type": "string"},
             "keywords": {"type": "string"},
             "slides": {
@@ -78,7 +80,7 @@ TOOL = {
                 },
             }
         },
-        "required": ["slides", "lo", "keywords"],
+        "required": ["slides", "deck_title", "lo", "keywords"],
         "additionalProperties": False,
     },
     "strict": True,
@@ -105,7 +107,7 @@ def _encode_image(path: Path) -> dict:
 
 def _build_user_content(req: GenerateRequest, images: dict[int, Path], capacity: dict) -> list[dict]:
     lines = []
-    if req.title:
+    if req.title and not req.whole_lesson:  # a whole lesson is named after its topic
         lines.append(f"Deck title: {req.title}")
     if req.topic:
         lines.append(f"Topic / lesson context: {req.topic}")
@@ -135,6 +137,9 @@ def _build_user_content(req: GenerateRequest, images: dict[int, Path], capacity:
             lines.append(f'- #{c["number"]}{role} "{c.get("heading", "")}"{body}{extra}')
     if req.whole_lesson:
         lines.append(f"Write a whole lesson of exactly {req.slide_count} slides (pages 1 to {req.slide_count}).")
+        if catalogue:
+            lines.append(f"Open the lesson the way she does: page 1 uses her slide #{catalogue[0]['number']} "
+                         "(don't add a separate title-only slide unless her template has one).")
         lines.append(f"The teacher's topic and key points:\n{req.brief.strip()}")
     else:
         lines.append(f"Create exactly {len(req.slides)} slides:")
@@ -199,7 +204,7 @@ def _call_claude(req: GenerateRequest, images: dict[int, Path], capacity: dict,
     if block is None:
         raise RuntimeError("The AI did not return slide content. Please try again.")
     if extras is not None:  # lesson-wide lines: her "LO:" and "Keywords:" strips
-        for key in ("lo", "keywords"):
+        for key in ("deck_title", "lo", "keywords"):
             value = block.input.get(key)
             if isinstance(value, str) and value.strip():
                 extras[key] = " ".join(value.split())[:300]

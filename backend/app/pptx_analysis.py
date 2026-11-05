@@ -516,6 +516,15 @@ def extract_style_profile(path: Path) -> dict:
     }
 
 
+ONE_OFF = re.compile(r"\b(requisition|technician|equipment list|cover lesson|cover work)\b", re.I)
+
+
+def one_off_slides(infos: list[SlideInfo]) -> list[int]:
+    """Sample slides that are about one lesson only and never a design to copy, e.g. the
+    technician's "Requisition x 15" equipment list. 1-based slide numbers."""
+    return [i.index + 1 for i in infos if ONE_OFF.search(i.preview_text or "")]
+
+
 def template_catalogue(prs, infos: list[SlideInfo]) -> list[dict]:
     """Her template's slides, in her order, for the AI: number, heading, routine role and a
     short example of what she writes there (so new slides follow her patterns)."""
