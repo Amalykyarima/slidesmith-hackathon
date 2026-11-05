@@ -516,6 +516,29 @@ def extract_style_profile(path: Path) -> dict:
     }
 
 
+def template_catalogue(prs, infos: list[SlideInfo]) -> list[dict]:
+    """Her template's slides, in her order, for the AI: number, heading, routine role and a
+    short example of what she writes there (so new slides follow her patterns)."""
+    out = []
+    for info in infos:
+        if info.complex:
+            continue  # tables/charts can't be refilled
+        slide = prs.slides[info.index]
+        title = shape_by_id(slide, info.title_id) if info.title_id else None
+        body = shape_by_id(slide, info.body_id) if info.body_id else None
+        lines = [p.text.strip() for p in body.text_frame.paragraphs if p.text.strip()] if body is not None else []
+        out.append({
+            "number": info.index + 1,
+            "heading": " ".join(_text(title).split())[:70] if title is not None else "",
+            "role": info.role or "",
+            "kind": info.kind,
+            "holds_text": body is not None,
+            "example": " / ".join(lines)[:220],
+            "labels": sorted(set(info.slots.values())),
+        })
+    return out
+
+
 def style_roles(prs, infos: list[SlideInfo]) -> dict[str, dict[str, str]]:
     """Routine slides this style has, with an example heading each (for the AI prompt).
 

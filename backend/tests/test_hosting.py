@@ -95,7 +95,7 @@ def test_daily_ai_limit(hosted, monkeypatch):
     monkeypatch.setattr(config, "AI_ENABLED", True)
     monkeypatch.setattr(config, "AI_DAILY_LIMIT", 1)
     monkeypatch.setattr(ai, "generate_content",
-                        lambda req, images, cap: ([SlideContent(page=1, title="AI slide", bullets=["x"])], "ai"))
+                        lambda req, images, cap, extras=None: ([SlideContent(page=1, title="AI slide", bullets=["x"])], "ai"))
     c = _signed_in("maple-42")
     try:
         style = c.post("/api/styles", files={"file": ("bio.pptx", (FIX / "biology_dark.pptx").read_bytes())}).json()

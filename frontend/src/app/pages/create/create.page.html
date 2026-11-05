@@ -34,7 +34,7 @@
           role="radio"
           [attr.aria-checked]="styleId() === s.id"
           [class.selected]="styleId() === s.id"
-          (click)="styleId.set(s.id)"
+          (click)="chooseStyle(s.id)"
         >
           <span class="pick-thumb" [style.background]="'#' + (s.profile.palette[0] || '0f766e')">
             @if (s.previews.length) {
@@ -69,6 +69,17 @@
         <span class="hint">{{ lessonDateLabel() }} · replaces the dates on your slides</span>
       </label>
     </div>
+    <div class="label-row">
+      <label class="field">
+        Learning objective <span class="hint">(optional)</span>
+        <input class="input" [ngModel]="lo()" (ngModelChange)="lo.set($event)" maxlength="300" placeholder="e.g. When does light stay inside glass?" />
+      </label>
+      <label class="field">
+        Keywords <span class="hint">(optional)</span>
+        <input class="input" [ngModel]="keywords()" (ngModelChange)="keywords.set($event)" maxlength="300" placeholder="e.g. Critical angle, Optical fibre" />
+      </label>
+      <p class="muted small label-note">Fills the “LO:” and “Keywords:” lines on your slides. {{ exact() ? 'Leave empty to remove the old lesson’s lines.' : 'Leave empty and the AI writes them.' }}</p>
+    </div>
     <div class="two">
       <label class="field">
         Subject / year group
@@ -87,27 +98,66 @@
   <div class="section-head wrap">
     <span class="section-num">3</span>
     <div class="grow">
-      <h2>What goes on each slide?</h2>
-      @if (exact()) {
-        <p class="muted small">First line is the slide title; each line after it is one bullet. Used exactly as written, with no AI.</p>
-      } @else {
-        <p class="muted small">Write rough notes for each page number. Attach a picture to any page that needs one.</p>
+      <h2>How should we make the slides?</h2>
+      @switch (mode()) {
+        @case ('lesson') {
+          <p class="muted small">Give the topic and anything it must cover. The AI plans the whole lesson in the order of your template and writes every slide.</p>
+        }
+        @case ('exact') {
+          <p class="muted small">First line is the slide title; each line after it is one bullet. Used exactly as written, with no AI.</p>
+        }
+        @default {
+          <p class="muted small">For each page, write notes or instructions (e.g. “3 retrieval questions on last lesson”). Pick one of your template slides, or leave it on Auto.</p>
+        }
       }
     </div>
-    <div class="slide-tools">
-      <input #lesson type="file" accept=".json,application/json" hidden (change)="importLesson($event)" />
-      <button type="button" class="btn btn-sm" (click)="lesson.click()">Import lesson file</button>
-    </div>
+    @if (mode() !== 'lesson') {
+      <div class="slide-tools">
+        <input #lesson type="file" accept=".json,application/json" hidden (change)="importLesson($event)" />
+        <button type="button" class="btn btn-sm" (click)="lesson.click()">Import lesson file</button>
+      </div>
+    }
   </div>
 
-  <label class="exact-toggle">
-    <input type="checkbox" [checked]="exact()" (change)="exact.set($any($event.target).checked)" />
-    <span>
-      <strong>Use my text exactly (no AI)</strong>
-      <span class="muted small">For slides you've already written. Nothing is reworded, and no AI credit is used.</span>
-    </span>
-  </label>
+  <div class="modes" role="radiogroup" aria-label="How to make the slides">
+    <button type="button" role="radio" class="mode" [class.on]="mode() === 'lesson'" [attr.aria-checked]="mode() === 'lesson'" (click)="mode.set('lesson')">
+      <strong>✨ AI writes the whole lesson</strong>
+      <span class="muted small">Just give a topic</span>
+    </button>
+    <button type="button" role="radio" class="mode" [class.on]="mode() === 'slides'" [attr.aria-checked]="mode() === 'slides'" (click)="mode.set('slides')">
+      <strong>AI, slide by slide</strong>
+      <span class="muted small">Your notes or instructions per slide</span>
+    </button>
+    <button type="button" role="radio" class="mode" [class.on]="mode() === 'exact'" [attr.aria-checked]="mode() === 'exact'" (click)="mode.set('exact')">
+      <strong>My exact text</strong>
+      <span class="muted small">No AI, no credit used</span>
+    </button>
+  </div>
 
+  @if (mode() === 'lesson') {
+    <div class="lesson-panel">
+      <label class="field">
+        Topic and what to cover
+        <textarea
+          class="input"
+          rows="4"
+          maxlength="4000"
+          [ngModel]="brief()"
+          (ngModelChange)="brief.set($event)"
+          placeholder="e.g. Total internal reflection, Year 10 AQA Physics. Critical angle, optical fibres, a required-practical style task and 3 exam questions with answers."
+        ></textarea>
+      </label>
+      <label class="field count">
+        Number of slides
+        <input class="input" type="number" min="2" max="30" inputmode="numeric" [value]="slideCount()" (change)="setSlideCount($any($event.target).value)" />
+      </label>
+      @if (templateSlides().length) {
+        <p class="muted small plan-note">
+          The lesson follows your template: {{ templateSlides().length }} slide designs, from “{{ templateSlides()[0].label.split(' · ')[1] }}” to “{{ templateSlides()[templateSlides().length - 1].label.split(' · ')[1] }}”.
+        </p>
+      }
+    </div>
+  } @else {
   <div class="slides">
     @for (row of rows(); track row.key) {
       <div class="slide-row">
@@ -134,10 +184,26 @@
             [placeholder]="
               exact()
                 ? 'Short-term effects\nSlower reaction times\nPoor judgement and risk-taking'
-                : 'e.g. Intro to photosynthesis. Plants make food from sunlight. Needs water + CO₂. Ask: where does it happen?'
+                : 'Notes or instructions, e.g. “3 retrieval questions on reflection, Green/Amber/Red” or “Explain refraction simply, ask why a straw looks bent”'
             "
             [attr.aria-label]="'Details for page ' + row.page"
           ></textarea>
+          @if (templateSlides().length) {
+            <label class="template-pick small">
+              <span class="muted">Template slide</span>
+              <select
+                class="input"
+                [ngModel]="row.sample"
+                (ngModelChange)="patch(row.key, { sample: $event })"
+                [attr.aria-label]="'Which of your template slides to use for page ' + row.page"
+              >
+                <option [ngValue]="null">Auto (best match)</option>
+                @for (t of templateSlides(); track t.number) {
+                  <option [ngValue]="t.number">{{ t.label }}</option>
+                }
+              </select>
+            </label>
+          }
           @if (row.role || row.notes) {
             <div class="row-meta small">
               @if (row.role) {
@@ -232,6 +298,7 @@
   }
 
   <button type="button" class="btn" style="margin-top: 14px" (click)="addRow()">+ Add another slide</button>
+  }
 </section>
 
 <!-- ============ Submit ============ -->
@@ -240,7 +307,11 @@
     @if (generating()) {
       <span class="spinner"></span> Building your slides…
     } @else {
-      {{ exact() ? 'Build' : 'Generate' }} {{ filledRows().length || '' }} {{ filledRows().length === 1 ? 'slide' : 'slides' }}
+      @if (mode() === 'lesson') {
+        Generate the whole lesson ({{ slideCount() }} slides)
+      } @else {
+        {{ exact() ? 'Build' : 'Generate' }} {{ filledRows().length || '' }} {{ filledRows().length === 1 ? 'slide' : 'slides' }}
+      }
     }
   </button>
   @if (generating()) {
@@ -249,7 +320,9 @@
     </span>
   } @else if (!styleId()) {
     <span class="muted small">Choose a style first.</span>
-  } @else if (filledRows().length === 0) {
+  } @else if (mode() === 'lesson' && !brief().trim()) {
+    <span class="muted small">Type the lesson's topic first.</span>
+  } @else if (mode() !== 'lesson' && filledRows().length === 0) {
     <span class="muted small">Add some notes to at least one slide.</span>
   }
 </div>
