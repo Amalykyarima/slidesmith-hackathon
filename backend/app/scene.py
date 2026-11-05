@@ -85,6 +85,11 @@ def editable_shapes(slide, slide_w: int, slide_h: int) -> list:
     for shape in slide.shapes:
         if None in (shape.left, shape.top, shape.width, shape.height):
             continue
+        # Parked entirely off the slide (icons kept beside it for later): a slideshow never
+        # shows them, so the editor doesn't either.
+        if (shape.left + shape.width <= 0 or shape.top + shape.height <= 0
+                or shape.left >= slide_w or shape.top >= slide_h):
+            continue
         if _is_picture(shape):
             if shape.width * shape.height < 0.85 * slide_w * slide_h:
                 out.append(shape)

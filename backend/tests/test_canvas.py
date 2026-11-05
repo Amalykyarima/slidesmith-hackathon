@@ -176,3 +176,16 @@ def test_background_keeps_a_designed_title_box_with_hidden_words(tmp_path):
     for r in title.text_frame.paragraphs[0].runs:
         alpha = r._r.find(f".//{qn('a:alpha')}")
         assert alpha is not None and alpha.get("val") == "0"  # but nothing visible
+
+
+def test_pictures_parked_off_the_slide_are_not_editable(tmp_path):
+    path = _deck(tmp_path)
+    prs = Presentation(str(path))
+    img = tmp_path / "icon.png"
+    Image.new("RGB", (40, 40), "#00aa00").save(img)
+    parked = prs.slides[0].shapes.add_picture(str(img), Inches(3), -Inches(1.2), Inches(0.8), Inches(0.8))
+    edge = prs.slides[0].shapes.add_picture(str(img), Inches(5), -Inches(0.2), Inches(0.8), Inches(0.8))
+    prs.save(path)
+    ids = {s["id"] for s in scene.describe_slide(path, 1)["shapes"]}
+    assert parked.shape_id not in ids  # wholly above the slide: never shown in a slideshow
+    assert edge.shape_id in ids  # partly on the slide: still editable
