@@ -94,6 +94,33 @@
             }
           </div>
 
+          @if (style.profile.exemplars?.length) {
+            <details class="slide-picker">
+              <summary>
+                Choose slides
+                <span class="muted small">({{ inUse(style) }} of {{ style.profile.exemplars!.length }} in use)</span>
+              </summary>
+              <p class="muted small">Untick one-off slides, like a technician's equipment list. They're never copied into new lessons.</p>
+              <div class="mini-grid">
+                @for (e of style.profile.exemplars; track e.index) {
+                  @let n = e.index + 1;
+                  @let off = isExcluded(style, n);
+                  <label class="mini" [class.off]="off">
+                    @if (style.previews[e.index]) {
+                      <img [src]="style.previews[e.index]" [alt]="'Sample slide ' + n" loading="lazy" />
+                    } @else {
+                      <span class="mini-text">{{ e.preview_text || 'Slide ' + n }}</span>
+                    }
+                    <span class="mini-foot">
+                      <input type="checkbox" [checked]="!off" [disabled]="saving() === style.id" (change)="toggleSlide(style, n, $any($event.target).checked)" />
+                      {{ n }} · {{ off ? 'Not used' : 'Used' }}
+                    </span>
+                  </label>
+                }
+              </div>
+            </details>
+          }
+
           <div class="actions">
             <a class="btn btn-sm btn-primary" routerLink="/create" [queryParams]="{ style: style.id }">Use this style</a>
             <button class="btn btn-sm btn-danger" type="button" (click)="remove(style)">Remove</button>

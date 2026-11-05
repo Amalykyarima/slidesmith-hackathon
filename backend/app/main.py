@@ -20,7 +20,7 @@ from .auth import owner
 from .generator import build_deck
 from .previews import previews_available, render_into, render_previews
 from .pptx_analysis import (
-    analyze_presentation, content_capacity, extract_style_profile, style_roles, template_catalogue,
+    analyze_presentation, content_capacity, extract_style_profile, one_off_slides, style_roles, template_catalogue,
 )
 from .schemas import BuildRequest, GenerateRequest, SlideContent, SlideEdits
 from . import scene, storage, videos
@@ -69,6 +69,8 @@ def _style_out(row: dict) -> dict:
         "profile": db.loads(row["profile"], {}),
         "preview_status": row["preview_status"],
         "previews": _preview_urls("styles", row["id"], row["preview_count"]),
+        # Her sample slides she switched off (1-based): never copied, never offered to the AI.
+        "excluded": db.loads(row.get("excluded") or "[]", []),
     }
 
 
@@ -242,6 +244,7 @@ def upload_style(background: BackgroundTasks, file: UploadFile = File(...), name
     path.write_bytes(data)
     try:
         profile = extract_style_profile(path)
+        excluded = one_off_slides(analyze_presentation(Presentation(str(path))))
     except Exception:  # noqa: BLE001
         log.exception("Could not read uploaded deck")
         path.unlink(missing_ok=True)
@@ -249,8 +252,9 @@ def upload_style(background: BackgroundTasks, file: UploadFile = File(...), name
 
     display_name = name.strip() or Path(filename).stem
     db.run(
-        "INSERT INTO styles (id, name, filename, path, profile, preview_status, owner) VALUES (?,?,?,?,?,?,?)",
-        (style_id, display_name, filename, str(path), db.dumps(profile), "pending" if previews_available() else "unavailable", owner()),
+        "INSERT INTO styles (id, name, filename, path, profile, preview_status, owner, excluded) VALUES (?,?,?,?,?,?,?,?)",
+        (style_id, display_name, filename, str(path), db.dumps(profile), "pending" if previews_available() else "unavailable",
+         owner(), db.dumps(excluded)),
     )
     if previews_available():
         background.add_task(_render_in_background, "styles", "styles", style_id, path)
@@ -266,13 +270,25 @@ def get_style(style_id: str):
 
 
 @app.patch("/api/styles/{style_id}")
-def rename_style(style_id: str, payload: dict):
-    name = str(payload.get("name", "")).strip()
-    if not name:
-        raise HTTPException(400, "Name can't be empty")
-    if not db.one("SELECT id FROM styles WHERE id=? AND owner=?", (style_id, owner())):
+def update_style(style_id: str, payload: dict):
+    """Rename a style and/or choose which of its sample slides may be used."""
+    row = db.one("SELECT * FROM styles WHERE id=? AND owner=?", (style_id, owner()))
+    if not row:
         raise HTTPException(404, "Style not found")
-    db.run("UPDATE styles SET name=? WHERE id=?", (name[:80], style_id))
+    if "name" in payload:
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise HTTPException(400, "Name can't be empty")
+        db.run("UPDATE styles SET name=? WHERE id=?", (name[:80], style_id))
+    if "excluded" in payload:
+        count = db.loads(row["profile"], {}).get("slide_count", 0)
+        raw = payload.get("excluded")
+        if not isinstance(raw, list) or not all(isinstance(n, int) for n in raw):
+            raise HTTPException(400, "excluded must be a list of slide numbers")
+        chosen = sorted({n for n in raw if 1 <= n <= count})
+        if count and len(chosen) >= count:
+            raise HTTPException(400, "Keep at least one slide in use.")
+        db.run("UPDATE styles SET excluded=? WHERE id=?", (db.dumps(chosen), style_id))
     return _style_out(db.one("SELECT * FROM styles WHERE id=? AND owner=?", (style_id, owner())))
 
 
@@ -399,7 +415,8 @@ def _build_and_record(
     out_path = config.OUTPUTS_DIR / f"{gen_id}.pptx"
     try:
         warnings = build_deck(Path(style["path"]), contents, image_paths, out_path, deck_title=title, videos=video_links, lesson_date=lesson_date,
-                               lesson_labels=lesson_labels)
+                               lesson_labels=lesson_labels,
+                               skip=set(db.loads(style.get("excluded") or "[]", [])))
     except Exception:  # noqa: BLE001
         log.exception("Deck generation failed")
         out_path.unlink(missing_ok=True)
@@ -434,7 +451,8 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     video_links = _video_links(req.slides, image_paths)
 
     prs = Presentation(str(Path(style["path"])))
-    infos = analyze_presentation(prs)
+    skip = set(db.loads(style.get("excluded") or "[]", []))
+    infos = [i for i in analyze_presentation(prs) if i.index + 1 not in skip] or analyze_presentation(prs)
     capacity = {**content_capacity(prs, infos), "roles": style_roles(prs, infos),
                 "catalogue": template_catalogue(prs, infos)}
 
@@ -463,7 +481,11 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
     except RuntimeError as exc:  # the AI answered without slides, twice
         raise HTTPException(502, str(exc))
 
-    return _build_and_record(style, req.title, req.model_dump(mode="json"), contents, image_paths, mode, background, video_links, req.lesson_date,
+    # A whole lesson is named after its topic: the AI's name for it, else the topic's first line.
+    title = req.title.strip()
+    if req.whole_lesson:
+        title = extras.get("deck_title") or req.brief.strip().splitlines()[0][:120]
+    return _build_and_record(style, title, req.model_dump(mode="json"), contents, image_paths, mode, background, video_links, req.lesson_date,
                              _labels(req, extras))
 
 
@@ -561,6 +583,17 @@ def edit_slide(gen_id: str, number: int, edits: SlideEdits, background: Backgrou
 def list_generations():
     rows = db.many("SELECT * FROM generations WHERE owner=? ORDER BY created_at DESC, rowid DESC LIMIT 20", (owner(),))
     return [_generation_out(r) for r in rows]
+
+
+@app.post("/api/generations/{gen_id}/previews")
+def redraw_previews(gen_id: str, background: BackgroundTasks):
+    """Previews failed or took too long: draw them again."""
+    row = _own_generation(gen_id)
+    if not previews_available():
+        raise HTTPException(400, "Previews need LibreOffice on the server.")
+    db.run("UPDATE generations SET preview_status='pending' WHERE id=?", (gen_id,))
+    background.add_task(_render_generation, gen_id, Path(row["path"]))
+    return _generation_out(db.one("SELECT * FROM generations WHERE id=?", (gen_id,)))
 
 
 @app.get("/api/generations/{gen_id}")

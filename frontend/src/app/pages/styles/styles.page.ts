@@ -20,6 +20,33 @@ export class StylesPage {
   protected readonly error = signal<string | null>(null);
   protected readonly dragOver = signal(false);
   protected readonly editingId = signal<string | null>(null);
+  /** Style whose slide choice is being saved. */
+  protected readonly saving = signal<string | null>(null);
+
+  protected isExcluded(style: SlideStyle, n: number): boolean {
+    return (style.excluded ?? []).includes(n);
+  }
+
+  protected inUse(style: SlideStyle): number {
+    return (style.profile.exemplars?.length ?? 0) - (style.excluded?.length ?? 0);
+  }
+
+  protected async toggleSlide(style: SlideStyle, n: number, use: boolean): Promise<void> {
+    const current = new Set(style.excluded ?? []);
+    if (use) current.delete(n);
+    else current.add(n);
+    this.saving.set(style.id);
+    this.error.set(null);
+    try {
+      const updated = await firstValueFrom(this.api.setExcludedSlides(style.id, [...current].sort((a, b) => a - b)));
+      this.styles.update((list) => list.map((s) => (s.id === updated.id ? updated : s)));
+    } catch (err) {
+      this.error.set(errorMessage(err));
+      this.styles.update((list) => [...list]); // put the tick back as it was
+    } finally {
+      this.saving.set(null);
+    }
+  }
 
   constructor() {
     void this.refresh();

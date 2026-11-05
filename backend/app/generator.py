@@ -143,6 +143,66 @@ def refresh_dates(slide, lesson: dt.date) -> int:
     return changed
 
 
+def _rpr_look(rpr) -> tuple:
+    if rpr is None:
+        return (None, None)
+    fill = rpr.find(qn("a:solidFill"))
+    colour = None if fill is None else etree.tostring(fill)
+    return (rpr.get("b"), colour)
+
+
+def _label_split(p):
+    """Her line starts with a short label run styled apart from the text after it,
+    e.g. a green bold "(G)" then the question in plain text. Returns
+    (label, label rPr, text rPr or None), or None for an ordinary line."""
+    runs = [r for r in p.findall(qn("a:r")) if (r.findtext(qn("a:t")) or "").strip()]
+    if not runs:
+        return None
+    label = (runs[0].findtext(qn("a:t")) or "").strip()
+    if not label or len(label) > 14:
+        return None
+    label_rpr = runs[0].find(qn("a:rPr"))
+    body_rpr = runs[1].find(qn("a:rPr")) if len(runs) > 1 else None
+    if len(runs) > 1 and _rpr_look(label_rpr) == _rpr_look(body_rpr):
+        return None  # same look: just text split into runs
+    if len(runs) == 1 and (_rpr_look(label_rpr) == (None, None) or len(_para_text(p).strip()) > len(label)):
+        return None  # a plain short line, not a styled label
+    return label, label_rpr, body_rpr
+
+
+def _plain(rpr):
+    """Her label's run settings without its colour and bold: for text after a label."""
+    out = copy.deepcopy(rpr) if rpr is not None else etree.Element(qn("a:rPr"))
+    for fill in out.findall(qn("a:solidFill")):
+        out.remove(fill)
+    if out.get("b"):
+        del out.attrib["b"]
+    return out
+
+
+def _restyle_run(r, rpr) -> None:
+    old = r.find(qn("a:rPr"))
+    new = copy.deepcopy(rpr)
+    new.tag = qn("a:rPr")
+    if old is not None:
+        r.replace(old, new)
+    else:
+        r.insert(0, new)
+
+
+def _set_labelled(p, line: str, split) -> None:
+    """A new line that starts with her label: label in her label style, rest in her text style."""
+    label, label_rpr, body_rpr = split
+    rest = line.lstrip()[len(label):]
+    _set_para_text(p, label)
+    first = p.find(qn("a:r"))
+    if rest.strip():
+        tail = copy.deepcopy(first)
+        _restyle_run(tail, body_rpr if body_rpr is not None else _plain(label_rpr))
+        tail.find(qn("a:t")).text = rest if rest.startswith(" ") else " " + rest
+        first.addnext(tail)
+
+
 def _set_para_text(p, text: str) -> None:
     for extra in [*p.findall(qn("a:br")), *p.findall(qn("a:fld"))]:
         p.remove(extra)
@@ -395,9 +455,23 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
     if not is_title and first is not None and lines and _para_text(first).strip().lower() == lines[0].lower():
         label_template = copy.deepcopy(first)
 
+    # Her lines that start with a styled label ("(G)", "(A)", "(R)"): a new line with the
+    # same label copies that line's look; any other line gets her plain text style.
+    labelled = [(sp, sl) for sp in paras if not is_title and (sl := _label_split(sp))]
+    template_split = None if is_title else _label_split(template)
+
     for p in paras:
         tx.remove(p)
     for i, line in enumerate(lines):
+        match_label = next(((sp, sl) for sp, sl in labelled
+                            if line.lstrip().lower().startswith(sl[0].lower())), None)
+        if match_label and not (i == 0 and label_template is not None):
+            p = copy.deepcopy(match_label[0])
+            _set_labelled(p, line, match_label[1])
+            if len(lines) > 1 and not shape.is_placeholder:
+                _ensure_spacing(p)
+            tx.append(p)
+            continue
         p = copy.deepcopy(label_template if i == 0 and label_template is not None else template)
         parts = _split_title(line) if is_title and len(lines) == 1 else None
         if is_title and len(lines) == 1 and parts is None:
@@ -409,6 +483,10 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
             pass
         else:
             _set_para_text(p, prefix + line if line and not LITERAL_BULLET.match(line) else line)
+            if template_split is not None and not (i == 0 and label_template is not None):
+                # Her longest line starts with a coloured label; this line has none: plain text style.
+                _restyle_run(p.find(qn("a:r")), template_split[2] if template_split[2] is not None
+                             else _plain(template_split[1]))
         if len(lines) > 1 and not shape.is_placeholder:
             _ensure_spacing(p)
         tx.append(p)
@@ -465,6 +543,36 @@ def _element_box(el) -> tuple[int, int, int, int] | None:
     if off is None or ext is None:
         return None
     return int(off.get("x")), int(off.get("y")), int(ext.get("cx")), int(ext.get("cy"))
+
+
+def _overlays(slide, el) -> list:
+    """Small pictures and icons sitting on top of a sample picture (a YouTube play button
+    on a video still, a badge in its corner). They belong to that picture."""
+    box = _element_box(el)
+    if box is None:
+        return []
+    x, y, w, h = box
+    out = []
+    for other in slide.shapes._spTree.iterchildren():
+        # Only plain pictures: her routine badges ("Climate 1 'I do'") are grouped labels and stay.
+        if other is el or other.tag != qn("p:pic"):
+            continue
+        ob = _element_box(other)
+        if ob is None or ob[2] * ob[3] >= 0.25 * w * h:
+            continue
+        ix = max(0, min(x + w, ob[0] + ob[2]) - max(x, ob[0]))
+        iy = max(0, min(y + h, ob[1] + ob[3]) - max(y, ob[1]))
+        if ob[2] * ob[3] and ix * iy >= 0.5 * ob[2] * ob[3]:
+            out.append(other)
+    return out
+
+
+def _remove_picture(slide, el) -> None:
+    for extra in _overlays(slide, el):
+        if extra.getparent() is not None:
+            extra.getparent().remove(extra)
+    if el.getparent() is not None:
+        el.getparent().remove(el)
 
 
 def _side_image(prs, target: Target, image_path: Path, alt: str) -> None:
@@ -771,19 +879,32 @@ def _render_page(prs, originals, info: SlideInfo | None, kind: str, content: Sli
         box = _element_box(biggest) if biggest is not None else None
         if box and (target.body is not None or not body_lines):
             # The sample has a picture spot and somewhere for the text: use her layout.
+            for extra in _overlays(slide, biggest):  # the old video's play button etc.
+                extra.getparent().remove(extra)
             _place_picture(slide, box, image, alt, replace_el=biggest)
         else:
             # No picture spot (or nowhere for the text): her text slide, picture beside it.
             for el in target.picture_els:
-                if el.getparent() is not None:
-                    el.getparent().remove(el)
+                _remove_picture(slide, el)
             _side_image(prs, target, image, alt)
     else:
         for el in target.picture_els:
-            if el.getparent() is not None:
-                el.getparent().remove(el)
+            box = _element_box(el)
+            _remove_picture(slide, el)
+            body = target.body
+            if box and body is not None and None not in (body.left, body.width, body.top, body.height):
+                # Her photo sat beside the text; without it the text can use that space.
+                beside = box[0] >= body.left + body.width * 0.8 and box[1] < body.top + body.height \
+                    and box[1] + box[3] > body.top
+                if beside:
+                    body.width = max(body.width, box[0] + box[2] - body.left)
 
     # ---- text ------------------------------------------------------------ #
+    if info is not None and info.role == "exit":
+        # Her exit routine is the school's fixed routine: kept exactly as she wrote it.
+        if content.notes.strip():
+            slide.notes_slide.notes_text_frame.text = content.notes.strip()
+        return slide
     if target.title is not None:
         fill_text(target.title, slide, [content.title or label], True, warnings, f"{label} title")
     for sid, line in slot_lines.items():
@@ -791,6 +912,14 @@ def _render_page(prs, originals, info: SlideInfo | None, kind: str, content: Sli
     if target.body is not None:
         if body_lines or not target.body.is_placeholder:
             fill_text(target.body, slide, body_lines or [""], False, warnings, f"{label} body")
+            if content.kind in ("title", "section") and not content.bullets:
+                # A subtitle under her heading is not a list item, even on a numbered sample.
+                for para in target.body.text_frame._txBody.findall(qn("a:p")):
+                    _set_no_bullet(para)
+                    ppr = para.find(qn("a:pPr"))
+                    if ppr is not None:  # and no hanging indent left over from the list
+                        ppr.set("marL", "0")
+                        ppr.set("indent", "0")
         else:
             target.body._element.getparent().remove(target.body._element)
             target.body = None
@@ -810,6 +939,7 @@ def build_deck(
     videos: dict[int, str] | None = None,
     lesson_date: dt.date | None = None,
     lesson_labels: dict[str, str] | None = None,
+    skip: set[int] | None = None,
 ) -> list[str]:
     """`videos`: page -> video link. When that page's picture is the video's thumbnail
     (videos.thumbnail), clicking the picture opens the video; when the teacher also gave
@@ -822,6 +952,8 @@ def build_deck(
     warnings: list[str] = []
     originals = list(prs.slides)
     infos = analyze_presentation(prs)
+    if skip:  # slides she switched off (e.g. a one-off technician list): never copied
+        infos = [i for i in infos if i.index + 1 not in skip] or infos
     usage: Counter = Counter()
     noted: set[tuple[str, str]] = set()
 
@@ -854,6 +986,11 @@ def build_deck(
             continue
 
         # Try the best samples in turn until one shows every line of the page.
+        if content.kind == "title" and not content.sample and not any(i.kind == "title" for i in infos):
+            # No title slide in her template: open the way her own lessons open, with her first slide.
+            first = next((i for i in infos if not i.complex), None)
+            if first is not None:
+                content = content.model_copy(update={"sample": first.index + 1})
         chosen = next((i for i in infos if content.sample and i.index == content.sample - 1 and not i.complex), None)
         role = page_role(content) or (chosen.role if chosen else None)
         candidates = rank_exemplars(infos, kind, usage, role, needs_body=bool(content.bullets))
@@ -863,7 +1000,7 @@ def build_deck(
         for info, by_role in candidates[:MAX_ATTEMPTS]:
             page_warnings = []
             slide = _render_page(prs, originals, info, kind, content, image, label, page_warnings, lesson, lesson_labels)
-            missing = missing_text(slide, content)
+            missing = [] if info.role == "exit" else missing_text(slide, content)  # kept as she wrote it
             attempts.append((missing, slide, info, by_role, page_warnings))
             if not missing:
                 break
@@ -903,5 +1040,9 @@ def build_deck(
 
     if deck_title:
         prs.core_properties.title = deck_title
+    # Discarded attempts free slide numbers that python-pptx then hands out twice
+    # ("slide24.xml" for two slides). PowerPoint copes; LibreOffice refuses the file, so
+    # previews and the slide editor fail. Number every slide part afresh.
+    prs.part.rename_slide_parts([sld.rId for sld in prs.slides._sldIdLst])
     prs.save(str(out_path))
     return warnings

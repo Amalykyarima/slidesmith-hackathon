@@ -21,6 +21,8 @@ export interface SlideStyle {
   profile: StyleProfile;
   preview_status: PreviewStatus;
   previews: string[];
+  /** Her sample slides switched off (1-based): never copied, never offered to the AI. */
+  excluded?: number[];
 }
 
 export interface UploadedImage {
