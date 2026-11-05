@@ -43,8 +43,9 @@ Rules:
 - If an image is attached, look at it and write text that fits what it actually shows (labels, key points, a question about it). Do not describe the image literally unless the teacher asks.
 - notes: 1-3 sentences of speaker notes the teacher can say aloud or use as a prompt for discussion. Leave empty if unnecessary.
 - Titles should be short (under 8 words) and must not end with a full stop.
+- Don't start bullets with your own numbers or bullet marks ("1.", "•", "-"): her slides number or bullet their lines themselves. Keep her labels such as "(G)", "(A)", "(R)".
 - deck_title: a short name for this lesson's deck, from what the lesson is actually about (e.g. "Electricity: circuits and mains safety"). Base it on the topic and notes, never on anything else.
-- lo: the lesson's learning objective, written the way her template writes it (often a short question, e.g. "How does light change direction?"). keywords: the lesson's key terms, comma-separated (e.g. "Refraction, Normal, Critical angle"). They fill her "LO:" and "Keywords:" lines on every slide.
+- lo: the lesson's learning objective, written the way her template writes it (often a short question, e.g. "How does light change direction?"). At most 12 words: it sits on one small line at the top of every slide. keywords: the lesson's key terms, comma-separated (e.g. "Refraction, Normal, Critical angle"). They fill her "LO:" and "Keywords:" lines on every slide.
 - Whole lesson (no pages listed, only a topic): plan a complete lesson of exactly the requested number of slides, pages numbered from 1, following the order of her template (her own lessons run in that order): skip template slides that don't fit, and use her teaching slides more than once for the main content. Every slide gets real content for the topic.
 - Match the teacher's spelling conventions (e.g. British vs American) from their notes.
 

@@ -458,6 +458,9 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
     # Her lines that start with a styled label ("(G)", "(A)", "(R)"): a new line with the
     # same label copies that line's look; any other line gets her plain text style.
     labelled = [(sp, sl) for sp in paras if not is_title and (sl := _label_split(sp))]
+    # Every line already numbered ("1. Which meter…") on her bulleted list: no bullet as well ("• 1.").
+    typed_numbers = (not is_title and not auto_numbered and len(lines) > 1
+                     and all(LEADING_NUMBER.match(ln) for ln in lines))
     template_split = None if is_title else _label_split(template)
 
     for p in paras:
@@ -468,6 +471,8 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
         if match_label and not (i == 0 and label_template is not None):
             p = copy.deepcopy(match_label[0])
             _set_labelled(p, line, match_label[1])
+            if typed_numbers:
+                _set_no_bullet(p)
             if len(lines) > 1 and not shape.is_placeholder:
                 _ensure_spacing(p)
             tx.append(p)
@@ -487,6 +492,8 @@ def fill_text(shape, slide, lines: list[str], is_title: bool, warnings: list[str
                 # Her longest line starts with a coloured label; this line has none: plain text style.
                 _restyle_run(p.find(qn("a:r")), template_split[2] if template_split[2] is not None
                              else _plain(template_split[1]))
+        if typed_numbers:
+            _set_no_bullet(p)
         if len(lines) > 1 and not shape.is_placeholder:
             _ensure_spacing(p)
         tx.append(p)
@@ -813,11 +820,38 @@ def _apply_lesson_labels(slide, shape, labels: dict[str, str]) -> bool:
             partner.text_frame._txBody.remove(p)
     else:
         _fill_label(shape, value)
+    target = partner if partner is not None else shape
+    try:  # her strip is one small line: shrink the words to fit it rather than spill over the slide
+        base = resolve_pt(target, slide, False)
+        pt, _ = _fit_pt(target, [_text_of(target)], base, min(base, 8))
+        if pt < base:
+            _apply_size(target.text_frame._txBody, pt)
+    except Exception:  # noqa: BLE001 (sizing is best effort)
+        pass
     return True
 
 
 def _text_of(shape) -> str:
     return shape.text_frame.text if getattr(shape, "has_text_frame", False) else ""
+
+
+_KEEP_EMPTY = {PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.HEADER}
+
+
+def _drop_empty_placeholders(slide) -> None:
+    """An empty placeholder shows nothing in a slideshow but "Click to add title" while
+    editing (and in the slide editor's background). New slides don't keep them."""
+    for shape in list(slide.shapes):
+        el = shape._element
+        if el.tag != qn("p:sp") or not shape.is_placeholder:
+            continue
+        try:
+            kind = shape.placeholder_format.type
+        except (AttributeError, ValueError):
+            continue
+        if kind in _KEEP_EMPTY or (shape.has_text_frame and shape.text_frame.text.strip()):
+            continue
+        el.getparent().remove(el)
 
 
 def _render_page(prs, originals, info: SlideInfo | None, kind: str, content: SlideContent,
@@ -923,6 +957,8 @@ def _render_page(prs, originals, info: SlideInfo | None, kind: str, content: Sli
         else:
             target.body._element.getparent().remove(target.body._element)
             target.body = None
+
+    _drop_empty_placeholders(slide)
 
     # ---- notes ----------------------------------------------------------- #
     if content.notes.strip():

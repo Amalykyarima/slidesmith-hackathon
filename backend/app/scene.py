@@ -44,6 +44,11 @@ def _theme_colors(slide) -> dict[str, str]:
                     colors[name] = srgb.get("val")
                 elif sys_clr is not None:
                     colors[name] = sys_clr.get("lastClr") or "000000"
+            # Theme fonts, for text that says "+mj-lt" / "+mn-lt" or names no font.
+            for kind, key in (("majorFont", "+mj"), ("minorFont", "+mn")):
+                latin = root.find(f".//{{{A}}}{kind}/{{{A}}}latin")
+                if latin is not None and latin.get("typeface"):
+                    colors[key] = latin.get("typeface")
             return colors
     return {}
 
@@ -150,8 +155,9 @@ def _run_props(rpr, defaults: dict, theme) -> dict:
     if colour:
         props["color"] = colour
     latin = rpr.find(qn("a:latin"))
-    if latin is not None and latin.get("typeface") and not latin.get("typeface").startswith("+"):
-        props["font"] = latin.get("typeface")
+    face = latin.get("typeface") if latin is not None else None
+    if face:
+        props["font"] = theme.get(face[:3], props.get("font")) if face.startswith("+") else face
     return props
 
 
@@ -163,7 +169,7 @@ def _shape_defaults(shape, slide, theme) -> dict:
         "italic": False,
         "underline": False,
         "color": "#" + theme.get("dk1", "000000").upper(),
-        "font": None,
+        "font": theme.get("+mj" if is_title else "+mn"),
     }
 
 
@@ -243,6 +249,8 @@ def describe_slide(pptx_path: Path, number: int) -> dict:
                 border=border,
                 anchor=(body.get("anchor") if body is not None else None) or ("ctr" if _ph_type(shape) and "TITLE" in str(_ph_type(shape)) else "t"),
                 insets={"l": get("lIns", 91440), "t": get("tIns", 45720), "r": get("rIns", 91440), "b": get("bIns", 45720)},
+                # "none": the text stays on one line however narrow the box (PowerPoint's "Wrap text" off).
+                wrap=(body.get("wrap") if body is not None else None) or "square",
                 paragraphs=[_paragraph_model(p, base, theme, scale) for p in shape.text_frame._txBody.findall(qn("a:p"))],
             )
         shapes.append(item)
@@ -268,10 +276,23 @@ def slides_copy(pptx_path: Path, numbers: list[int], out_path: Path, strip: bool
             theme = _theme_colors(slide)
             for shape in editable_shapes(slide, prs.slide_width, prs.slide_height):
                 if not _is_picture(shape) and _box_fill(shape, theme)[1]:
-                    for t in shape.text_frame._txBody.iter(qn("a:t")):
-                        t.text = ""
+                    ts = list(shape.text_frame._txBody.iter(qn("a:t")))
+                    for k, t in enumerate(ts):
+                        # A space, not nothing: an empty placeholder is drawn as "Click to add text".
+                        t.text = " " if k == 0 else ""
                 else:
                     shape._element.getparent().remove(shape._element)
+            for shape in list(slide.shapes):  # empty placeholders: invisible in a slideshow, prompts here
+                if shape._element.tag == qn("p:sp") and shape.is_placeholder and not (
+                        shape.has_text_frame and shape.text_frame.text.strip()):
+                    try:
+                        kind = str(shape.placeholder_format.type)
+                    except (AttributeError, ValueError):
+                        continue
+                    if not any(k in kind for k in ("DATE", "FOOTER", "SLIDE_NUMBER", "HEADER")):
+                        if _box_fill(shape, theme)[1]:
+                            continue  # its frame is part of the design
+                        shape._element.getparent().remove(shape._element)
     prs.save(str(out_path))
 
 
