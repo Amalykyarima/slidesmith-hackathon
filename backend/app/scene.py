@@ -276,10 +276,9 @@ def slides_copy(pptx_path: Path, numbers: list[int], out_path: Path, strip: bool
             theme = _theme_colors(slide)
             for shape in editable_shapes(slide, prs.slide_width, prs.slide_height):
                 if not _is_picture(shape) and _box_fill(shape, theme)[1]:
-                    ts = list(shape.text_frame._txBody.iter(qn("a:t")))
-                    for k, t in enumerate(ts):
-                        # A space, not nothing: an empty placeholder is drawn as "Click to add text".
-                        t.text = " " if k == 0 else ""
+                    # Keep her box, hide its words: fully transparent text. Emptied instead, a
+                    # title placeholder is drawn as "Click to add Title" by some LibreOffice versions.
+                    _hide_text(shape)
                 else:
                     shape._element.getparent().remove(shape._element)
             for shape in list(slide.shapes):  # empty placeholders: invisible in a slideshow, prompts here
@@ -294,6 +293,41 @@ def slides_copy(pptx_path: Path, numbers: list[int], out_path: Path, strip: bool
                             continue  # its frame is part of the design
                         shape._element.getparent().remove(shape._element)
     prs.save(str(out_path))
+
+
+def _hide_text(shape) -> None:
+    """Make every run (and line end) of a box fully transparent, keeping the text itself."""
+    body = shape.text_frame._txBody
+    if not "".join(t.text or "" for t in body.iter(qn("a:t"))).strip():
+        p = body.find(qn("a:p"))
+        if p is not None:  # nothing to hide: give it an invisible dot so it isn't "empty"
+            r = etree.SubElement(p, qn("a:r"))
+            etree.SubElement(r, qn("a:rPr"))
+            etree.SubElement(r, qn("a:t")).text = "."
+            end = p.find(qn("a:endParaRPr"))
+            if end is not None:
+                p.remove(end)
+                p.append(end)
+    for tag in ("a:rPr", "a:endParaRPr"):
+        for rpr in body.iter(qn(tag)):
+            for old in [c for c in rpr if c.tag in (qn("a:solidFill"), qn("a:gradFill"), qn("a:noFill"),
+                                                     qn("a:pattFill"), qn("a:blipFill"))]:
+                rpr.remove(old)
+            fill = etree.Element(qn("a:solidFill"))
+            clr = etree.SubElement(fill, qn("a:srgbClr"), val="FFFFFF")
+            etree.SubElement(clr, qn("a:alpha"), val="0")
+            ln = rpr.find(qn("a:ln"))
+            if ln is not None:
+                ln.addnext(fill)
+            else:
+                rpr.insert(0, fill)
+    for r in body.iter(qn("a:r")):  # runs with no rPr of their own
+        if r.find(qn("a:rPr")) is None:
+            rpr = etree.Element(qn("a:rPr"))
+            fill = etree.SubElement(rpr, qn("a:solidFill"))
+            clr = etree.SubElement(fill, qn("a:srgbClr"), val="FFFFFF")
+            etree.SubElement(clr, qn("a:alpha"), val="0")
+            r.insert(0, rpr)
 
 
 def background_deck(pptx_path: Path, number: int, out_path: Path) -> None:

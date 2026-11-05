@@ -153,3 +153,26 @@ def test_editing_is_per_teacher(monkeypatch):
         assert zoey.get(f"/api/generations/{gen['id']}/slides/1").status_code == 200
         assert lee.get(f"/api/generations/{gen['id']}/slides/1").status_code == 404
         assert lee.post(f"/api/generations/{gen['id']}/slides/1", json={"shapes": []}).status_code == 404
+
+
+def test_background_keeps_a_designed_title_box_with_hidden_words(tmp_path):
+    """Her vocabulary definition is a title placeholder with its own gradient. The
+    background keeps the box; its words are made transparent rather than deleted,
+    because an empty title placeholder is drawn as "Click to add Title"."""
+    prs = Presentation()
+    s = prs.slides.add_slide(prs.slide_layouts[5])  # "Title Only"
+    s.shapes.title.text = "Index (noun): a sign or measure of something"
+    sp_pr = s.shapes.title._element.spPr
+    grad = etree.SubElement(sp_pr, qn("a:gradFill"))
+    lst = etree.SubElement(grad, qn("a:gsLst"))
+    for pos, colour in (("0", "DCE9FF"), ("100000", "9EC2FF")):
+        gs = etree.SubElement(lst, qn("a:gs"), pos=pos)
+        etree.SubElement(gs, qn("a:srgbClr"), val=colour)
+    path, out = tmp_path / "vocab.pptx", tmp_path / "bg.pptx"
+    prs.save(path)
+    scene.background_deck(path, 1, out)
+    title = Presentation(str(out)).slides[0].shapes.title
+    assert title is not None and title.text_frame.text.strip()  # never an empty placeholder
+    for r in title.text_frame.paragraphs[0].runs:
+        alpha = r._r.find(f".//{qn('a:alpha')}")
+        assert alpha is not None and alpha.get("val") == "0"  # but nothing visible
