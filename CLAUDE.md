@@ -45,5 +45,6 @@ No `ANTHROPIC_API_KEY` in `backend/.env` = demo (mock) mode.
 - python-pptx can't write WebP: images are converted on upload.
 - Strip the PowerPoint "sections" extension after deleting samples, or PowerPoint offers repair.
 - LibreOffice must run one conversion at a time with its own profile dir (lock in `previews.py`).
-- `npm install` "edgesOut" error → `--legacy-peer-deps`.
+- Adding a frontend package: plain `npm install <pkg>` (never `--legacy-peer-deps`: it leaves
+  `package-lock.json` out of sync and Render's `npm ci` fails). Check with `npm ci` in a clean copy.
 - Text fitting is estimated, not measured; min title 24pt, body 14pt.
