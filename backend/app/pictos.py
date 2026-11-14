@@ -56,7 +56,7 @@ PREFERRED: dict[str, str] = {
     "show": "1F64B", "welcome": "1F44B", "hello": "1F44B", "goodbye": "1F44B", "glue": "1F4CE",
     "learn": "1F393", "lesson": "1F393", "lecture": "1F393", "study": "1F393", "revise": "1F4DA",
     "supply": "1F4E6", "demand": "1F6D2", "price": "1F4B7", "market": "1F3EA", "money": "1F4B7",
-    "equilibrium": "2696", "balance": "2696", "bottle": "E0CB", "make": "1F6E0", "model": "1F6E0", "build": "1F6E0",
+    "equilibrium": "2696", "balance": "2696", "bottle": "E0CB", "alcohol": "1F377", "wine": "1F377", "drinks": "1F964", "adult": "1F9D1", "make": "1F6E0", "model": "1F6E0", "build": "1F6E0",
     "card": "1F4C7", "plate": "1F37D", "bin": "1F5D1", "rubbish": "1F5D1", "clay": "1F3FA", "sand": "1F3D6",
     "cut": "2702", "colour": "1F58D", "color": "1F58D", "colouring": "1F3A8", "paint": "1F58C", "measure": "1F4CF",
     "tidy": "1F9F9", "line up": "1F6B6", "walk": "1F6B6", "sit": "1FA91", "chair": "1FA91",

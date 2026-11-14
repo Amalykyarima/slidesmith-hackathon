@@ -93,7 +93,7 @@ const KIND_LABEL: Record<string, string> = {
       <!-- ================= Human-in-the-loop review ================= -->
       @if (r?.status === 'needs_review') {
         <div class="review">
-          <h3>Your review: {{ flaggedPages().length }} {{ flaggedPages().length === 1 ? 'slide needs' : 'slides need' }} a look</h3>
+          <h3>Your review: {{ shownPages().length }} {{ shownPages().length === 1 ? 'slide' : 'slides' }} to look at</h3>
           <p class="muted small">
             Edit the text, or tick “Fine as it is” for each point. Personal data can't be waved through: remove it.
             Nothing is built until you approve.
@@ -144,7 +144,7 @@ const KIND_LABEL: Record<string, string> = {
           }
 
           @if (otherPages().length) {
-            <p class="small muted">Slides {{ otherPages().join(', ') }} passed every check.</p>
+            <p class="small muted">{{ otherPages().length === 1 ? 'Slide' : 'Slides' }} {{ otherPages().join(', ') }} passed every check.</p>
           }
 
           @if (approveError(); as m) {
@@ -247,6 +247,7 @@ export class AgentRun {
     return NODES.filter((n) => n.key !== 'sen' || r?.sen !== false);
   });
 
+  protected readonly shownPages = computed(() => [...new Set((this.run()?.flags ?? []).map((f) => f.page))]);
   protected readonly flaggedPages = computed(() => [...new Set((this.run()?.flags ?? []).filter((f) => f.severity !== 'info').map((f) => f.page))]);
   protected readonly otherPages = computed(() => {
     const flagged = new Set((this.run()?.flags ?? []).map((f) => f.page));
@@ -351,7 +352,8 @@ export class AgentRun {
     }
     if (!mine.length) return r?.status === 'built' || r?.status === 'failed' ? 'skipped' : 'idle';
     const last = mine[mine.length - 1].status;
-    return last === 'working' && r?.status !== 'running' && r?.status !== 'needs_review' ? 'done' : last;
+    const finished = r?.status !== 'running' && r?.status !== 'needs_review';
+    return (last === 'working' || last === 'waiting') && finished ? 'done' : last;
   }
 
   protected since(e: RunEvent): string {
