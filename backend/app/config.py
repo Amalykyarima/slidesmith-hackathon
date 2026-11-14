@@ -77,3 +77,14 @@ PREVIEW_MAX_SLIDES = int(os.getenv("PREVIEW_MAX_SLIDES", "0") or 0)
 AI_DAILY_LIMIT = int(os.getenv("AI_DAILY_LIMIT", "0") or 0)
 # Built Angular app, served by FastAPI in production (one service, one address).
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", BASE_DIR.parent / "frontend" / "dist" / "frontend" / "browser"))
+
+# --------------------------------------------------------------------------- #
+# Live avatar (Synthesia on LiveKit). The worker in avatar/ runs separately.
+# --------------------------------------------------------------------------- #
+LIVEKIT_URL = os.getenv("LIVEKIT_URL", "").strip()
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "").strip()
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "").strip()
+AVATAR_AGENT_NAME = os.getenv("AVATAR_AGENT_NAME", "slidesmith-avatar").strip()
+# Shared with the avatar worker so it can call this API for the teacher who opened the session.
+AVATAR_SECRET = os.getenv("AVATAR_SECRET", "").strip()
+AVATAR_ENABLED = bool(LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET and AVATAR_SECRET)

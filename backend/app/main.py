@@ -637,6 +637,46 @@ def make_supports(payload: dict):
         raise HTTPException(502, agents._friendly(exc))
 
 
+# --------------------------------------------------------------------------- #
+# Live avatar: a LiveKit room the Synthesia avatar worker joins
+# --------------------------------------------------------------------------- #
+@app.get("/api/avatar")
+def avatar_status():
+    return {"configured": config.AVATAR_ENABLED}
+
+
+@app.post("/api/avatar/token")
+def avatar_token(payload: dict):
+    """A room for the teacher and the avatar. mode "build": talk to make a lesson; "present": teach a deck."""
+    if not config.AVATAR_ENABLED:
+        raise HTTPException(503, "The live avatar isn't set up on this server (LiveKit keys and AVATAR_SECRET).")
+    from datetime import timedelta
+
+    from livekit import api as lk
+
+    mode = payload.get("mode") if payload.get("mode") in ("build", "present") else "build"
+    meta = {"mode": mode, "owner": owner(), "level": levels.get(payload.get("level")).key}
+    if mode == "present":
+        gen_id = str(payload.get("generation_id") or "")
+        if not db.one("SELECT id FROM generations WHERE id=? AND owner=?", (gen_id, owner())):
+            raise HTTPException(404, "Choose a deck to present.")
+        meta["generation_id"] = gen_id
+    room = f"slidesmith-{uuid.uuid4().hex[:10]}"
+    token = (
+        lk.AccessToken(config.LIVEKIT_API_KEY, config.LIVEKIT_API_SECRET)
+        .with_identity(f"teacher-{uuid.uuid4().hex[:6]}")
+        .with_name(owner() or "Teacher")
+        .with_ttl(timedelta(minutes=15))
+        .with_grants(lk.VideoGrants(room_join=True, room=room, can_publish_data=True))
+        .with_room_config(lk.RoomConfiguration(
+            sync_streams=True,
+            agents=[lk.RoomAgentDispatch(agent_name=config.AVATAR_AGENT_NAME, metadata=db.dumps(meta))],
+        ))
+        .to_jwt()
+    )
+    return {"url": config.LIVEKIT_URL, "token": token, "room": room, "mode": mode}
+
+
 @app.get("/api/pictos/search")
 def picto_search(q: str = ""):
     return pictos.search(q)

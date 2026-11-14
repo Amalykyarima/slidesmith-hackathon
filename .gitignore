@@ -11,3 +11,5 @@ backend/tests/out/
 backend/tests/out_*.pptx
 .pytest_cache/
 backend/.venv
+avatar/.env
+**/.env

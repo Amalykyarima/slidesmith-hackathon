@@ -29,6 +29,12 @@ python -m venv .venv
 if [ ! -f .env ]; then cp .env.example .env; fi
 .venv/bin/python tests/make_fixtures.py
 
+echo "== Live avatar worker =="
+cd "$ROOT/avatar"
+python -m venv .venv
+.venv/bin/pip install -q -r requirements.txt
+if [ ! -f .env ]; then cp .env.example .env; fi
+
 echo "== Frontend =="
 cd "$ROOT/frontend"
 npm ci --no-audit --no-fund
