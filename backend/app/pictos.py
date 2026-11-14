@@ -29,7 +29,7 @@ PREFERRED: dict[str, str] = {
     "quiet": "1F92B", "silent": "1F92B", "shh": "1F92B",
     "question": "2753", "ask": "270B", "hand up": "270B", "answer": "1F4AC",
     "check": "2705", "done": "2705", "finish": "2705", "finished": "2705", "complete": "2705",
-    "start": "1F7E2", "begin": "1F7E2", "stop": "1F6D1", "wait": "23F3", "time": "23F0", "timer": "23F2",
+    "start": "1F6A6", "begin": "1F6A6", "starter": "1F6A6", "stop": "1F6D1", "wait": "23F3", "time": "23F0", "timer": "23F2",
     "break": "2615", "rest": "1F6CB", "calm": "1F60C", "breathe": "1F32C",
     "lunch": "1F96A", "eat": "1F37D", "drink": "1F964", "water": "1F4A7",
     "play": "26BD", "playground": "1F6DD", "pe": "1F3C3", "run": "1F3C3", "music": "1F3B5", "art": "1F3A8",

@@ -1,5 +1,5 @@
-<h1>Create today's slides</h1>
-<p class="lead">Pick a style, tell us what goes on each page, and attach any pictures. We'll build the deck in your style.</p>
+<h1>Create a lesson</h1>
+<p class="lead">For primary, secondary or university. Pick your style, say who it's for, and a team of AI agents writes, adapts and checks the slides. You approve anything they flag, and the deck comes back in your own style.</p>
 
 @if (error(); as message) {
   <div class="alert alert-error" role="alert">{{ message }}</div>
@@ -54,10 +54,31 @@
     <span class="section-num">2</span>
     <div>
       <h2>About this lesson</h2>
-      <p class="muted small">Optional, but it helps the AI pitch the wording at the right level.</p>
+      <p class="muted small">Who it's for sets the reading level, how much goes on a slide and how strictly it's reviewed.</p>
     </div>
   </div>
   <div class="stack">
+    <div class="audience">
+      <div class="field">
+        Who is it for?
+        <div class="levels" role="radiogroup" aria-label="Level">
+          @for (l of levelOptions; track l.key) {
+            <button type="button" role="radio" class="mode level" [class.on]="level() === l.key" [attr.aria-checked]="level() === l.key" (click)="level.set(l.key)">
+              <strong>{{ l.label }}</strong>
+              <span class="muted small">{{ l.hint }}</span>
+            </button>
+          }
+        </div>
+      </div>
+      <label class="field sen-field">
+        SEN support <span class="hint">(simpler wording, symbols, step cards)</span>
+        <select class="input" [ngModel]="sen()" (ngModelChange)="sen.set($event)" [disabled]="exact()">
+          <option value="auto">Auto: on for primary, or when your notes mention SEN</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+    </div>
     <div class="title-row">
       @if (mode() === 'lesson') {
         <div class="field">
@@ -312,10 +333,10 @@
 <div class="submit">
   <button type="button" class="btn btn-primary btn-lg" [disabled]="!canSubmit()" (click)="generate()">
     @if (generating()) {
-      <span class="spinner"></span> Building your slides…
+      <span class="spinner"></span> {{ exact() ? 'Building your slides…' : 'Starting the AI team…' }}
     } @else {
       @if (mode() === 'lesson') {
-        Generate the whole lesson ({{ slideCount() }} slides)
+        Generate the whole lesson ({{ slideCount() }} slides) with the AI team
       } @else {
         {{ exact() ? 'Build' : 'Generate' }} {{ filledRows().length || '' }} {{ filledRows().length === 1 ? 'slide' : 'slides' }}
       }
@@ -333,6 +354,13 @@
     <span class="muted small">Add some notes to at least one slide.</span>
   }
 </div>
+
+<!-- ============ Agents (live) ============ -->
+@if (runId(); as id) {
+  <div id="agents">
+    <app-agent-run [runId]="id" (built)="onBuilt($event)" />
+  </div>
+}
 
 <!-- ============ Result ============ -->
 @if (result(); as r) {
@@ -431,5 +459,19 @@
         </div>
       }
     </details>
+  </section>
+}
+
+<!-- ============ Visual supports from the SEN Adapter ============ -->
+@if (supports(); as s) {
+  <section class="card section">
+    <div class="section-head">
+      <span class="section-num">🧩</span>
+      <div>
+        <h2>Visual supports for this lesson</h2>
+        <p class="muted small">Made by the SEN Adapter from your slides. Print them for pupils who need them.</p>
+      </div>
+    </div>
+    <app-supports-view [supports]="s" />
   </section>
 }

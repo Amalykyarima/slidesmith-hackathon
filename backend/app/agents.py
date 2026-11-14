@@ -217,7 +217,7 @@ def execute(run: dict, req: GenerateRequest, images: dict[int, Path], capacity: 
         state["slides"] = slides = adapted
         state["supports"] = supports
         emit(run, "sen", f"Simplified {len(changed)} slide(s); made {len(supports['key_words'])} key-word cards, "
-             f"{len(supports['task_steps'])} step cards and a {len(supports['schedule'])}-step Now/Next schedule",
+             f"{len(supports['task_steps'])} step card(s) and a {len(supports['schedule'])}-step Now/Next schedule",
              "done", {"changed": sorted(changed)})
     else:
         state["supports"] = None
