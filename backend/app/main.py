@@ -10,12 +10,12 @@ from pathlib import Path
 import anthropic
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from pptx import Presentation
 
-from . import ai, auth, config, db
+from . import agents, ai, auth, config, db, levels, pictos
 from .auth import owner
 from .generator import build_deck
 from .previews import previews_available, render_into, render_previews
@@ -36,6 +36,7 @@ ALLOWED_IMAGE_FORMATS = {"PNG", "JPEG", "GIF", "WEBP", "BMP", "MPO"}
 async def lifespan(_: FastAPI):
     storage.startup()  # bring back saved work before the database is opened
     db.init_db()
+    agents.init_db()
     log.info("AI mode: %s | previews: %s", "claude" if config.AI_ENABLED else "MOCK", previews_available())
     yield
     storage.shutdown()  # last save before the server sleeps
@@ -51,6 +52,8 @@ app.add_middleware(
 )
 app.mount("/files/previews", StaticFiles(directory=config.PREVIEWS_DIR), name="previews")
 app.mount("/files/images", StaticFiles(directory=config.IMAGES_DIR), name="images")
+if pictos.PICTO_DIR.exists():
+    app.mount("/files/pictos", StaticFiles(directory=pictos.PICTO_DIR), name="pictos")
 
 
 # --------------------------------------------------------------------------- #
@@ -187,6 +190,7 @@ def health():
         "previews_enabled": previews_available(),
         "auth_required": config.AUTH_ENABLED,
         "storage": storage.status(),
+        "levels": levels.public(),
     }
 
 
@@ -442,20 +446,15 @@ def _build_and_record(
     return _generation_out(db.one("SELECT * FROM generations WHERE id=? AND owner=?", (gen_id, owner())))
 
 
-@app.post("/api/generate", status_code=201)
-def generate(req: GenerateRequest, background: BackgroundTasks):
-    """Teacher's rough notes -> AI (or demo mode) writes the slides -> deck."""
-    style = _load_style(req.style_id)
-    _check_pages([s.page for s in req.slides])
-    image_paths = _image_paths(req.slides)
-    video_links = _video_links(req.slides, image_paths)
-
+def _capacity(style: dict) -> dict:
     prs = Presentation(str(Path(style["path"])))
     skip = set(db.loads(style.get("excluded") or "[]", []))
     infos = [i for i in analyze_presentation(prs) if i.index + 1 not in skip] or analyze_presentation(prs)
-    capacity = {**content_capacity(prs, infos), "roles": style_roles(prs, infos),
-                "catalogue": template_catalogue(prs, infos)}
+    return {**content_capacity(prs, infos), "roles": style_roles(prs, infos),
+            "catalogue": template_catalogue(prs, infos)}
 
+
+def _check_ai_limit() -> None:
     if config.AI_ENABLED and config.AI_DAILY_LIMIT:
         used = db.one(
             "SELECT COUNT(*) AS n FROM generations WHERE owner=? AND mode='ai' AND date(created_at)=date('now')",
@@ -467,6 +466,17 @@ def generate(req: GenerateRequest, background: BackgroundTasks):
                 f"You've used today's {config.AI_DAILY_LIMIT} AI generations. Tick \"Use my text exactly (no AI)\" "
                 "to keep building today, or try again tomorrow.",
             )
+
+
+@app.post("/api/generate", status_code=201)
+def generate(req: GenerateRequest, background: BackgroundTasks):
+    """Teacher's rough notes -> AI (or demo mode) writes the slides -> deck."""
+    style = _load_style(req.style_id)
+    _check_pages([s.page for s in req.slides])
+    image_paths = _image_paths(req.slides)
+    video_links = _video_links(req.slides, image_paths)
+    capacity = _capacity(style)
+    _check_ai_limit()
 
     try:
         extras: dict[str, str] = {}
@@ -502,6 +512,179 @@ def build_exact(req: BuildRequest, background: BackgroundTasks):
     ]
     return _build_and_record(style, req.title, req.model_dump(mode="json"), contents, image_paths, "exact", background, video_links, req.lesson_date,
                              _labels(req, {}))
+
+
+
+# --------------------------------------------------------------------------- #
+# Agent runs: Orchestrator -> Planner -> SEN Adapter -> Reviewer -> (teacher) -> Builder
+# --------------------------------------------------------------------------- #
+class _ThreadTasks:
+    """BackgroundTasks for work started outside a request (agent threads)."""
+
+    def add_task(self, fn, *args, **kwargs):
+        threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True).start()
+
+
+@app.get("/api/levels")
+def list_levels():
+    return levels.public()
+
+
+def _own_run(run_id: str) -> dict:
+    run = agents.get(run_id, owner())
+    if not run:
+        raise HTTPException(404, "That run no longer exists. Start again.")
+    return run
+
+
+@app.post("/api/runs", status_code=201)
+def start_run(req: GenerateRequest):
+    """Start the agent team. Watch it on /api/runs/{id}/events."""
+    style = _load_style(req.style_id)
+    _check_pages([s.page for s in req.slides])
+    image_paths = _image_paths(req.slides)
+    video_links = _video_links(req.slides, image_paths)
+    capacity = _capacity(style)
+    _check_ai_limit()
+
+    def builder(run: dict, contents: list[SlideContent]) -> dict:
+        st = run["state"]
+        mode = st.get("ai_mode", "ai")
+        return _build_and_record(style, st.get("title", ""), {**req.model_dump(mode="json"), "run_id": run["id"]},
+                                 contents, image_paths, mode, _ThreadTasks(), video_links, req.lesson_date,
+                                 {"lo": st.get("lo", ""), "keywords": st.get("keywords", "")})
+
+    run = agents.create(req, owner())
+    _builders[run["id"]] = builder
+    agents.start(run, req, image_paths, capacity, builder)
+    return agents.public(run)
+
+
+# Builders for live runs, so the teacher's approval builds with the same style and pictures.
+_builders: dict[str, object] = {}
+
+
+@app.get("/api/runs")
+def list_runs():
+    rows = db.many("SELECT id FROM runs WHERE owner=? ORDER BY created_at DESC, rowid DESC LIMIT 20", (owner(),))
+    return [agents.public(agents.get(r["id"], owner())) for r in rows]
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(run_id: str):
+    return agents.public(_own_run(run_id))
+
+
+@app.get("/api/runs/{run_id}/events")
+def run_events(run_id: str, after: int = 0):
+    """Server-sent events: every agent step as it happens. Ends when the run stops or waits."""
+    run = _own_run(run_id)
+
+    def stream():
+        sent = after
+        idle = 0
+        while True:
+            events = run["events"]
+            while sent < len(events):
+                ev = events[sent]
+                sent += 1
+                yield f"id: {ev['n']}\nevent: agent\ndata: {db.dumps(ev)}\n\n"
+            if run["status"] in ("built", "failed", "needs_review") and sent >= len(run["events"]):
+                yield f"event: end\ndata: {db.dumps({'status': run['status']})}\n\n"
+                return
+            idle += 1
+            if idle % 50 == 0:
+                yield ": keep-alive\n\n"
+            if idle > 3000:  # ~10 minutes
+                return
+            time.sleep(0.2)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/runs/{run_id}/approve")
+def approve_run(run_id: str, payload: dict):
+    """Human-in-the-loop: the teacher edits flagged slides and approves; then the deck is built."""
+    run = _own_run(run_id)
+    if run["status"] != "needs_review":
+        raise HTTPException(409, "This run isn't waiting for review.")
+    builder = _builders.get(run_id)
+    if builder is None:
+        raise HTTPException(410, "The server restarted since this run started. Please run it again.")
+    slides = payload.get("slides") or []
+    accepted = payload.get("accepted") or []
+    if not isinstance(slides, list) or not isinstance(accepted, list):
+        raise HTTPException(400, "slides and accepted must be lists")
+    try:
+        generation = agents.approve(run, [s for s in slides if isinstance(s, dict)], accepted, builder)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"run": agents.public(run), "generation": generation}
+
+
+@app.post("/api/supports")
+def make_supports(payload: dict):
+    """Visual supports straight from a topic (no deck): Now/Next, timetable, steps, key words."""
+    topic = str(payload.get("topic") or "").strip()[:200]
+    details = str(payload.get("details") or "").strip()[:3000]
+    if not topic and not details:
+        raise HTTPException(400, "Say what the lesson or activity is about.")
+    try:
+        return agents.supports_from_topic(topic, details, str(payload.get("level") or ""))
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Visual supports failed")
+        raise HTTPException(502, agents._friendly(exc))
+
+
+# --------------------------------------------------------------------------- #
+# Live avatar: a LiveKit room the Synthesia avatar worker joins
+# --------------------------------------------------------------------------- #
+@app.get("/api/avatar")
+def avatar_status():
+    return {"configured": config.AVATAR_ENABLED}
+
+
+@app.post("/api/avatar/token")
+def avatar_token(payload: dict):
+    """A room for the teacher and the avatar. mode "build": talk to make a lesson; "present": teach a deck."""
+    if not config.AVATAR_ENABLED:
+        raise HTTPException(503, "The live avatar isn't set up on this server (LiveKit keys and AVATAR_SECRET).")
+    from datetime import timedelta
+
+    from livekit import api as lk
+
+    mode = payload.get("mode") if payload.get("mode") in ("build", "present") else "build"
+    meta = {"mode": mode, "owner": owner(), "level": levels.get(payload.get("level")).key}
+    if mode == "present":
+        gen_id = str(payload.get("generation_id") or "")
+        if not db.one("SELECT id FROM generations WHERE id=? AND owner=?", (gen_id, owner())):
+            raise HTTPException(404, "Choose a deck to present.")
+        meta["generation_id"] = gen_id
+    room = f"slidesmith-{uuid.uuid4().hex[:10]}"
+    token = (
+        lk.AccessToken(config.LIVEKIT_API_KEY, config.LIVEKIT_API_SECRET)
+        .with_identity(f"teacher-{uuid.uuid4().hex[:6]}")
+        .with_name(owner() or "Teacher")
+        .with_ttl(timedelta(minutes=15))
+        .with_grants(lk.VideoGrants(room_join=True, room=room, can_publish_data=True))
+        .with_room_config(lk.RoomConfiguration(
+            sync_streams=True,
+            agents=[lk.RoomAgentDispatch(agent_name=config.AVATAR_AGENT_NAME, metadata=db.dumps(meta))],
+        ))
+        .to_jwt()
+    )
+    return {"url": config.LIVEKIT_URL, "token": token, "room": room, "mode": mode}
+
+
+@app.get("/api/pictos/search")
+def picto_search(q: str = ""):
+    return pictos.search(q)
+
+
+@app.get("/api/pictos/match")
+def picto_match(word: str = ""):
+    return pictos.symbol(word)
 
 
 # --------------------------------------------------------------------------- #

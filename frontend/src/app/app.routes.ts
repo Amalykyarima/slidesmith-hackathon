@@ -20,5 +20,17 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./pages/create/create.page').then((m) => m.CreatePage),
   },
+  {
+    path: 'supports',
+    title: 'Visual supports · SlideSmith',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/supports/supports.page').then((m) => m.SupportsPage),
+  },
+  {
+    path: 'live',
+    title: 'Live avatar · SlideSmith',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/live/live.page').then((m) => m.LivePage),
+  },
   { path: '**', redirectTo: 'styles' },
 ];

@@ -98,3 +98,10 @@ textarea.input { resize: vertical; min-height: 84px; }
   padding: 40px 20px; text-align: center; color: var(--muted);
   border: 2px dashed var(--border); border-radius: var(--radius); background: var(--surface);
 }
+
+/* ---------- print (visual supports) ---------- */
+@media print {
+  .topbar, .no-print { display: none !important; }
+  html, body { background: #fff; }
+  .page { max-width: none; padding: 0; }
+}

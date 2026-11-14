@@ -65,6 +65,21 @@ def name_for_code(code: str) -> str | None:
     return None
 
 
+def _header(scope, name: bytes) -> str | None:
+    for key, value in scope.get("headers", []):
+        if key == name:
+            return value.decode("latin-1")
+    return None
+
+
+def _avatar_owner(scope) -> str | None:
+    """The avatar worker acts for the teacher who opened the live session (shared secret)."""
+    secret = _header(scope, b"x-avatar-secret")
+    if not config.AVATAR_SECRET or not secret or not hmac.compare_digest(secret.encode(), config.AVATAR_SECRET.encode()):
+        return None
+    return (_header(scope, b"x-owner") or "").strip()[:80]
+
+
 def _cookie_value(scope) -> str | None:
     for key, value in scope.get("headers", []):
         if key == b"cookie":
@@ -84,7 +99,10 @@ class AuthMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        name = read_token(_cookie_value(scope)) if config.AUTH_ENABLED else ""
+        avatar = _avatar_owner(scope)
+        name = avatar if avatar is not None else (read_token(_cookie_value(scope)) if config.AUTH_ENABLED else "")
+        if avatar is not None and config.AUTH_ENABLED and not avatar:
+            name = None
         path = scope.get("path", "")
         protected = path.startswith("/api/") or path.startswith("/files/")
         if config.AUTH_ENABLED and protected and path not in PUBLIC_PATHS and not name:

@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { BuildRequest, GenerateRequest, Generation, Health, ShapeEdit, SlideScene, SlideStyle, UploadedImage } from './models';
+import { BuildRequest, GenerateRequest, Generation, Health, Level, Run, RunSlide, ShapeEdit, SlideScene, SlideStyle, Supports, UploadedImage } from './models';
 
 /** All backend calls live here. Paths are relative; `proxy.conf.json` forwards them to FastAPI in dev. */
 @Injectable({ providedIn: 'root' })
@@ -70,6 +70,33 @@ export class ApiService {
 
   getGeneration(id: string): Observable<Generation> {
     return this.http.get<Generation>(`/api/generations/${id}`);
+  }
+
+  levels(): Observable<Level[]> {
+    return this.http.get<Level[]>('/api/levels');
+  }
+
+  /** Start the agent team (Orchestrator, Planner, SEN Adapter, Reviewer). Watch with runEvents(). */
+  startRun(request: GenerateRequest): Observable<Run> {
+    return this.http.post<Run>('/api/runs', request);
+  }
+
+  getRun(id: string): Observable<Run> {
+    return this.http.get<Run>(`/api/runs/${id}`);
+  }
+
+  /** Human-in-the-loop: the teacher's edits and the flags she accepted. Builds the deck. */
+  approveRun(id: string, slides: Partial<RunSlide>[], accepted: number[]): Observable<{ run: Run; generation: Generation }> {
+    return this.http.post<{ run: Run; generation: Generation }>(`/api/runs/${id}/approve`, { slides, accepted });
+  }
+
+  /** Visual supports straight from a topic (no deck). */
+  supports(topic: string, details: string, level: string): Observable<Supports> {
+    return this.http.post<Supports>('/api/supports', { topic, details, level });
+  }
+
+  searchPictos(q: string): Observable<{ id: string; name: string; url: string }[]> {
+    return this.http.get<{ id: string; name: string; url: string }[]>('/api/pictos/search', { params: { q } });
   }
 
   redrawPreviews(id: string): Observable<Generation> {

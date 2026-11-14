@@ -28,6 +28,7 @@ WORKDIR /app/backend
 COPY backend/requirements.txt ./
 RUN pip install -r requirements.txt
 COPY backend/app ./app
+COPY backend/pictos ./pictos
 COPY --from=web /web/dist/frontend/browser /app/frontend/browser
 
 RUN useradd --create-home slidesmith && mkdir -p /tmp/slidesmith && chown slidesmith /tmp/slidesmith

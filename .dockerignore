@@ -12,3 +12,4 @@ backend/storage
 backend/tests
 backend/.env
 **/.env
+avatar

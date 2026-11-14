@@ -56,6 +56,92 @@ export interface GenerateRequest {
   /** Her "LO:" / "Keywords:" lines. Empty = the AI writes them. */
   lo?: string;
   keywords?: string;
+  /** primary | secondary | university */
+  level?: LevelKey;
+  /** SEN scaffolding: true/false, or null to let the orchestrator decide. */
+  sen?: boolean | null;
+}
+
+export type LevelKey = 'primary' | 'secondary' | 'university';
+
+export interface Level {
+  key: LevelKey;
+  label: string;
+  reading_age: string;
+}
+
+/** A symbol card: the word, and the pictogram that matched it (null when none fits). */
+export interface Symbol {
+  word: string;
+  picto_id: string | null;
+  picto_url: string | null;
+  picto_name: string | null;
+}
+
+export interface KeyWordCard extends Symbol {
+  meaning: string;
+}
+
+export interface StepCard extends Symbol {
+  text: string;
+}
+
+export interface ScheduleCard extends Symbol {
+  label: string;
+}
+
+export interface Supports {
+  title: string;
+  credit: string;
+  key_words: KeyWordCard[];
+  task_steps: { page: number | null; task: string; steps: StepCard[] }[];
+  schedule: ScheduleCard[];
+}
+
+export type RunStatus = 'running' | 'needs_review' | 'built' | 'failed';
+
+export interface RunEvent {
+  n: number;
+  t: number;
+  agent: 'orchestrator' | 'guardrails' | 'planner' | 'sen' | 'reviewer' | 'builder' | 'teacher' | string;
+  name: string;
+  status: 'working' | 'done' | 'warn' | 'waiting' | 'error' | 'status' | string;
+  message: string;
+  data: Record<string, unknown>;
+}
+
+export interface Flag {
+  page: number;
+  severity: 'block' | 'check' | 'info';
+  kind: string;
+  message: string;
+  source: 'rules' | 'reviewer';
+  suggestion: string;
+}
+
+export interface RunSlide extends SlideContent {
+  symbols?: Symbol[];
+  sample?: number | null;
+}
+
+export interface Run {
+  id: string;
+  status: RunStatus;
+  events: RunEvent[];
+  level: LevelKey | null;
+  sen: boolean | null;
+  modes: string[];
+  title: string;
+  lo: string;
+  keywords: string;
+  slides: RunSlide[];
+  /** SEN Adapter: the bullets before simplifying, by page. */
+  original: Record<string, string[]>;
+  flags: Flag[];
+  supports: Supports | null;
+  generation_id: string | null;
+  error: string | null;
+  requires_review: boolean;
 }
 
 export interface SlideContent {
@@ -172,4 +258,5 @@ export interface Health {
   ai_enabled: boolean;
   model: string | null;
   previews_enabled: boolean;
+  levels?: Level[];
 }

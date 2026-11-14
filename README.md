@@ -1,4 +1,48 @@
-# SlideSmith (working name)
+# SlideSmith: an AI teaching team for every classroom
+
+**Imperial AI Hack 2026 · Reply Challenge: AI on Campus (Teaching track)**
+
+Teachers and lecturers spend hours every week making slides, and still more adapting them for pupils
+with special educational needs (SEN). SlideSmith gives them a team of AI agents that writes, adapts and
+checks a lesson, a teacher who stays in charge of every decision, and a deck that comes back **in the
+teacher's own PowerPoint style**. It works for **primary, secondary and university**.
+
+It started as a real tool: a secondary-school teacher asked her teaching assistant (me) to automate her
+daily slides, and the teachers there like it. This hackathon version adds the agent team, SEN visual
+supports and a live avatar.
+
+## What it does
+
+| | |
+|---|---|
+| **Agent team, live** | Orchestrator → Guardrails → Planner → SEN Adapter → Reviewer → *you* → Builder. Every step streams to the screen as it happens (server-sent events). |
+| **Mode-switching** | The Orchestrator picks modes per request: whole lesson or polish notes; Primary / Secondary / University (reading level, slide density, review strictness); SEN scaffolding on automatically for primary or when notes mention SEN, ADHD, autism, dyslexia… |
+| **Guardrail pipeline** | In code, before the AI: names, emails, phones, pupil numbers and postcodes are removed; "ignore previous instructions" is neutralised. After the AI: reading level (Flesch-Kincaid), density and personal data are checked again. A second model reviews accuracy, age fit, safeguarding and inclusion. |
+| **Human-in-the-loop escalation** | Anything flagged stops the build and goes to the teacher. She edits or accepts each point. Personal-data blocks can't be waved through. Nothing worrying? The deck builds straight away. |
+| **SEN visual supports** | Now/Next boards, visual timetables, step-by-step task cards and key-word cards with consistent open symbols (OpenMoji). Editable, swappable symbols, coloured backgrounds for dyslexia, large text, print to PDF. Made from the lesson, or on their own in seconds for a TA. |
+| **Live avatar (Synthesia + LiveKit)** | Talk to it to **build a lesson by voice**, then let it **present the deck**: it moves the slides, answers pupils' questions from the deck only, quizzes the class, and sends anything else (and any safeguarding concern, caught in code) to the teacher's inbox. Live captions on both sides. |
+| **Session state** | Every run keeps its state and event log, so the teacher can leave, come back, review and approve. |
+| **Her style, always** | The AI writes text only. Style comes from cloning the teacher's own sample slides (python-pptx): fonts, colours and layouts are hers, never generated. |
+
+## Architecture
+
+```
+Angular 21 (signals, zoneless) ──► FastAPI ──► agents.py  Orchestrator, SEN Adapter, Reviewer (Claude, strict tool calls)
+        │  SSE: /api/runs/{id}/events          ├─► ai.py      Planner (Claude)
+        │                                      ├─► guardrails.py  rule-based checks (no model)
+        │                                      ├─► generator.py   clones her slides, fills text (python-pptx)
+        │                                      └─► pictos.py      OpenMoji symbols, deterministic matching
+        └─► livekit-client ◄──► LiveKit Cloud ◄──► avatar/agent.py  Synthesia avatar · Cartesia STT/TTS · Claude
+```
+
+## Run it
+
+Backend and frontend as below (no API key = demo mode, the whole flow works offline). The live avatar is
+optional: see [avatar/README.md](avatar/README.md). Write-up and video script: [docs/HACKATHON.md](docs/HACKATHON.md).
+
+---
+
+## The original SlideSmith
 
 Teachers upload sample slide decks (their "styles"), then describe what goes on each page of today's lesson. SlideSmith builds a new .pptx in the same style.
 

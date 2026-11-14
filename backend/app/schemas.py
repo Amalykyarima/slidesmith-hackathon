@@ -31,6 +31,10 @@ class GenerateRequest(BaseModel):
     # Her "LO:" and "Keywords:" strips. Empty = the AI writes them.
     lo: str = Field(default="", max_length=300)
     keywords: str = Field(default="", max_length=300)
+    # Who the lesson is for: "primary", "secondary" or "university" (see levels.py).
+    level: str = Field(default="secondary", max_length=20)
+    # Add SEN scaffolding (simpler wording, symbols, step cards). None = the orchestrator decides.
+    sen: bool | None = None
 
     @model_validator(mode="after")
     def _slides_or_brief(self):

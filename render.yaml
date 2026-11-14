@@ -4,7 +4,7 @@
 # saved to Supabase Storage and brought back on every start.
 services:
   - type: web
-    name: slidesmith
+    name: slidesmith-hackathon   # separate from the school's live app
     runtime: docker
     plan: free
     region: frankfurt
@@ -28,4 +28,12 @@ services:
       - key: SUPABASE_SERVICE_KEY   # the service_role / secret key: never put it in the frontend
         sync: false
       - key: SUPABASE_BUCKET        # a PRIVATE bucket you create in Supabase Storage
-        value: slidesmith
+        value: slidesmith-hackathon # never the school's bucket
+      - key: LIVEKIT_URL            # live avatar (hackathon pass page / cloud.livekit.io)
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: AVATAR_SECRET          # same value as AVATAR_SECRET in avatar/.env
+        sync: false

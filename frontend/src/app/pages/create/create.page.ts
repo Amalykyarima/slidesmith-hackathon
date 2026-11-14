@@ -3,7 +3,9 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ApiService, errorMessage } from '../../core/api.service';
-import { BuildSlide, GenerateRequest, Generation, SlideKind, SlideStyle, UploadedImage } from '../../core/models';
+import { BuildSlide, GenerateRequest, Generation, LevelKey, Run, SlideKind, SlideStyle, Supports, UploadedImage } from '../../core/models';
+import { AgentRun } from '../../shared/agent-run';
+import { SupportsView } from '../../shared/supports-view';
 import { SlideCanvas } from './slide-canvas';
 import { checkVideoLink, VideoLink } from '../../core/video-link';
 
@@ -46,7 +48,7 @@ const DRAFT_KEY = 'slidesmith.draft.v1';
 
 @Component({
   selector: 'app-create-page',
-  imports: [FormsModule, RouterLink, SlideCanvas],
+  imports: [FormsModule, RouterLink, SlideCanvas, AgentRun, SupportsView],
   templateUrl: './create.page.html',
   styleUrl: './create.page.css',
 })
@@ -73,6 +75,19 @@ export class CreatePage {
   protected readonly lo = signal('');
   protected readonly keywords = signal('');
   protected readonly instructions = signal('');
+  /** Who the lesson is for: changes reading level, density and review strictness. */
+  protected readonly level = signal<LevelKey>('secondary');
+  protected readonly levelOptions: { key: LevelKey; label: string; hint: string }[] = [
+    { key: 'primary', label: 'Primary', hint: 'Ages 5-11' },
+    { key: 'secondary', label: 'Secondary', hint: 'Ages 11-16' },
+    { key: 'university', label: 'University / FE', hint: '16+' },
+  ];
+  /** SEN scaffolding: auto lets the orchestrator decide (on for primary or when notes mention SEN). */
+  protected readonly sen = signal<'auto' | 'on' | 'off'>('auto');
+  /** The agent run in progress (or finished) for this deck. */
+  protected readonly runId = signal<string | null>(null);
+  /** Visual supports the SEN Adapter made for this lesson. */
+  protected readonly supports = signal<Supports | null>(null);
   protected readonly rows = signal<Row[]>([this.blankRow(1)]);
   /** lesson: the AI writes the whole lesson from a topic · slides: AI, slide by slide ·
    *  exact: each page's first line is the title and every further line a bullet, no AI. */
@@ -156,6 +171,8 @@ export class CreatePage {
         topic: this.topic(),
         instructions: this.instructions(),
         mode: this.mode(),
+        level: this.level(),
+        sen: this.sen(),
         lo: this.lo(),
         keywords: this.keywords(),
         brief: this.brief(),
@@ -189,6 +206,8 @@ export class CreatePage {
       this.instructions.set(d.instructions ?? '');
       this.mode.set(d.mode === 'lesson' || d.mode === 'slides' || d.mode === 'exact' ? d.mode : d.exact ? 'exact' : 'slides');
       if (typeof d.brief === 'string') this.brief.set(d.brief);
+      if (d.level === 'primary' || d.level === 'secondary' || d.level === 'university') this.level.set(d.level);
+      if (d.sen === 'auto' || d.sen === 'on' || d.sen === 'off') this.sen.set(d.sen);
       if (typeof d.lo === 'string') this.lo.set(d.lo);
       if (typeof d.keywords === 'string') this.keywords.set(d.keywords);
       if (Number.isInteger(d.slideCount)) this.slideCount.set(Math.min(30, Math.max(2, d.slideCount)));
@@ -376,7 +395,27 @@ export class CreatePage {
                 video_url: this.video(r)?.url ?? null, sample: r.sample,
               })),
       ...(this.mode() === 'lesson' ? { brief: this.brief().trim(), slide_count: this.slideCount() } : {}),
+      level: this.level(),
+      sen: this.sen() === 'auto' ? null : this.sen() === 'on',
     };
+
+    if (!this.exact()) {
+      // The AI team: Orchestrator -> Guardrails -> Planner -> SEN Adapter -> Reviewer -> (you) -> Builder.
+      try {
+        this.result.set(null);
+        this.supports.set(null);
+        this.editingSlide.set(null);
+        const run = await firstValueFrom(this.api.startRun(request));
+        this.runId.set(run.id);
+        setTimeout(() => document.getElementById('agents')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+      } catch (err) {
+        this.error.set(errorMessage(err));
+      } finally {
+        clearInterval(this.elapsedTimer);
+        this.generating.set(false);
+      }
+      return;
+    }
 
     try {
       const generation = await firstValueFrom(
@@ -394,6 +433,22 @@ export class CreatePage {
     } finally {
       clearInterval(this.elapsedTimer);
       this.generating.set(false);
+    }
+  }
+
+  /** The agents finished (straight away, or after the teacher approved): show the deck. */
+  protected async onBuilt(evt: { run: Run; generation: Generation | null }): Promise<void> {
+    this.supports.set(evt.run.supports);
+    try {
+      const generation = evt.generation ?? (evt.run.generation_id ? await firstValueFrom(this.api.getGeneration(evt.run.generation_id)) : null);
+      if (!generation) return;
+      this.result.set(generation);
+      this.previewsSlow.set(false);
+      clearTimeout(this.pollTimer);
+      this.pollPreviews(generation.id, 0);
+      setTimeout(() => document.getElementById('result')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    } catch (err) {
+      this.error.set(errorMessage(err));
     }
   }
 
@@ -444,6 +499,8 @@ export class CreatePage {
 
   protected newDeck(): void {
     this.result.set(null);
+    this.runId.set(null);
+    this.supports.set(null);
     this.editingSlide.set(null);
     this.title.set('');
     this.topic.set('');
