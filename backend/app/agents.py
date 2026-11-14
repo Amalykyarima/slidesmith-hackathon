@@ -307,7 +307,9 @@ Rules:
   Keep the teacher's questions and tasks (same meaning, same marks like "(2)"). Leave a slide out if it
   is already simple.
 - symbols: for every slide, 1-3 plain, concrete words for symbols (e.g. "volcano", "listen", "write").
-  Prefer nouns and classroom actions a child can picture. Never abstract words.
+  Every symbol word (here and below) must be ONE common English noun or verb that names a picturable
+  object or action: "volcano", "scissors", "book", "ear", "pencil", "water". For an abstract idea pick the
+  nearest concrete thing ("pressure" -> "wind", "equilibrium" -> "balance"). Never two-word phrases.
 - key_words: up to 8 of the lesson's key terms, each with a child-friendly meaning (max 12 words)
   and one concrete symbol word.
 - task_steps: for each task or activity in the lesson, break it into 3-6 numbered steps, each
@@ -389,7 +391,8 @@ def sen_adapt(slides: list[dict], state: dict, lvl: levels.Level) -> tuple[list[
             by_page[page]["bullets"] = bullets[:8]
     symbols_by_page = {i.get("page"): i.get("words", [])[:3] for i in raw.get("symbols", [])}
     for page, s in by_page.items():
-        s["symbols"] = [pictos.symbol(w) for w in symbols_by_page.get(page, []) if w.strip()]
+        found = [pictos.symbol(w) for w in symbols_by_page.get(page, []) if w.strip()]
+        s["symbols"] = [f for f in found if f["picto_id"]]
     _, supports, _ = _apply_supports([], raw, state)
     return [by_page[s["page"]] for s in slides], supports, changed
 
@@ -526,13 +529,14 @@ def _apply_supports(slides: list[dict], raw: dict, state: dict):
     supports = {
         "title": state.get("title", ""),
         "credit": pictos.CREDIT,
-        "key_words": [{**pictos.symbol(k.get("symbol") or k.get("word", "")), "word": k.get("word", ""),
+        "key_words": [{**pictos.symbol(k.get("symbol") or k.get("word", ""), k.get("word", ""), k.get("meaning", "")),
+                       "word": k.get("word", ""),
                        "meaning": k.get("meaning", "")} for k in raw.get("key_words", [])[:8] if k.get("word")],
         "task_steps": [{"page": t.get("page"), "task": t.get("task", ""),
-                        "steps": [{**pictos.symbol(st.get("symbol") or st.get("text", "")), "text": st.get("text", "")}
+                        "steps": [{**pictos.symbol(st.get("symbol") or st.get("text", ""), st.get("text", "")), "text": st.get("text", "")}
                                   for st in t.get("steps", [])[:6]]}
                        for t in raw.get("task_steps", [])[:6] if t.get("steps")],
-        "schedule": [{**pictos.symbol(st.get("symbol") or st.get("label", "")), "label": st.get("label", "")}
+        "schedule": [{**pictos.symbol(st.get("symbol") or st.get("label", ""), st.get("label", "")), "label": st.get("label", "")}
                      for st in raw.get("schedule", [])[:7] if st.get("label")],
     }
     return [by_page[s["page"]] for s in slides], supports, {}
