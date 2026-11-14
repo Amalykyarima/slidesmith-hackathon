@@ -48,7 +48,17 @@ PREFERRED: dict[str, str] = {
     "healthy": "1F34E", "food": "1F34E", "fruit": "1F34E", "sleep": "1F634", "exercise": "1F3C3",
     "underline": "270F", "circle": "2B55", "label": "1F3F7", "match": "1F517", "sort": "1F5C2", "list": "1F4DD",
     "explain": "1F4AC", "describe": "1F4AC", "compare": "2696", "plan": "1F4CB", "design": "1F4D0", "find": "1F50D",
-    "cut": "2702", "stick": "1F9F4", "glue": "1F9F4", "colour": "1F58D", "measure": "1F4CF",
+    "lava": "E099", "magma": "E099", "eruption": "E099", "erupt": "E099", "crater": "1F30B",
+    "pour": "1FAD7", "pouring": "1FAD7", "liquid": "1FAD7", "vinegar": "1FAD7", "mix": "1F944", "stir": "1F944",
+    "add": "2795", "plus": "2795", "minus": "2796", "equals": "1F7F0", "pressure": "1F4A8", "gas": "1F4A8",
+    "diagram": "1F5BC", "picture": "1F5BC", "key words": "1F511", "key word": "1F511", "vocabulary": "1F511",
+    "safety": "1F97D", "goggles": "1F97D", "lab": "1F97C", "practical": "1F97C", "experiment": "1F9EA",
+    "show": "1F64B", "welcome": "1F44B", "hello": "1F44B", "goodbye": "1F44B", "glue": "1F4CE",
+    "learn": "1F393", "lesson": "1F393", "lecture": "1F393", "study": "1F393", "revise": "1F4DA",
+    "supply": "1F4E6", "demand": "1F6D2", "price": "1F4B7", "market": "1F3EA", "money": "1F4B7",
+    "equilibrium": "2696", "balance": "2696", "bottle": "E0CB", "make": "1F6E0", "model": "1F6E0", "build": "1F6E0",
+    "card": "1F4C7", "plate": "1F37D", "bin": "1F5D1", "rubbish": "1F5D1", "clay": "1F3FA", "sand": "1F3D6",
+    "cut": "2702", "colour": "1F58D", "color": "1F58D", "colouring": "1F3A8", "paint": "1F58C", "measure": "1F4CF",
     "tidy": "1F9F9", "line up": "1F6B6", "walk": "1F6B6", "sit": "1FA91", "chair": "1FA91",
 }
 
@@ -80,6 +90,11 @@ def find(word: str) -> dict | None:
     if q in PREFERRED and PREFERRED[q] in _by_id():
         return _by_id()[PREFERRED[q]]
     qw = set(q.split())
+    if len(qw) > 1:  # a phrase containing a known classroom word: that word's symbol wins
+        padded = f" {q} "
+        for key in sorted(PREFERRED, key=len, reverse=True):
+            if f" {key} " in padded and PREFERRED[key] in _by_id():
+                return _by_id()[PREFERRED[key]]
     stem = {w.rstrip("s") for w in qw}
     best, best_score = None, 0.0
     for p in _index():
@@ -109,9 +124,22 @@ def find(word: str) -> dict | None:
     return best
 
 
-def symbol(word: str) -> dict:
-    """{word, picto_id, picto_url, picto_name} for a card. picto_* are null when nothing fits."""
+def symbol(word: str, *fallbacks: str) -> dict:
+    """{word, picto_id, picto_url, picto_name} for a card. picto_* are null when nothing fits.
+
+    When the agent's symbol word has no match, try the card's own text, then each of its words,
+    so a card is rarely left without a picture.
+    """
     p = find(word)
+    for alt in fallbacks:
+        if p:
+            break
+        p = find(alt)
+        for w in _words(alt):
+            if p:
+                break
+            if len(w) > 2:
+                p = find(w)
     return {
         "word": word,
         "picto_id": p["id"] if p else None,
