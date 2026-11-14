@@ -19,13 +19,13 @@ import anthropic
 from PIL import Image
 from pydantic import ValidationError
 
-from . import config
+from . import config, levels
 from .roles import ROLES, role_of
 from .schemas import GenerateRequest, SlideContent, SlideSpec
 
 log = logging.getLogger("slidesmith.ai")
 
-SYSTEM_PROMPT = """You write classroom slide content for secondary school teachers.
+SYSTEM_PROMPT = """You write teaching slide content for teachers and lecturers, from primary school to university.
 
 You receive the teacher's rough notes for specific slide numbers. Turn each into clean, student-friendly slide text.
 
@@ -38,7 +38,7 @@ Rules:
 - Tidy rough notes into short bullets: phrases or single sentences, not paragraphs. Stay within the words-per-bullet limit you are given unless that would change the teacher's own wording.
 - Routine slides: the teacher's style contains routine slides (listed in the request), such as a retrieval starter, vocabulary, "Turn and Talk", mini-whiteboard practice or an independent task. When a page is one of these, set "role" to its name and make the title follow the example heading for that role (e.g. if the example heading is a topic and a date, write only the new topic: SlideSmith adds the lesson's date in the teacher's own format). If the role has a label, make that label the first bullet. Leave "role" empty for ordinary teaching slides.
 - Never add prefixes such as "I do:", "We do:" or "You do:" to titles unless the teacher wrote them.
-- Use language suited to the year group / level if the teacher mentions it. Otherwise assume secondary school students.
+- Write for the audience and level given in the request (primary, secondary or university), and follow that level's writing rules. A year group the teacher mentions refines it.
 - kind: "title" for an opening slide (use title + subtitle, no bullets); "section" for a divider that only needs a heading (+ optional subtitle); "content" for normal teaching slides (title + bullets); "image" is used when an image is attached to that page (title + at most 3 short bullets, because the picture takes up half the slide).
 - If an image is attached, look at it and write text that fits what it actually shows (labels, key points, a question about it). Do not describe the image literally unless the teacher asks.
 - notes: 1-3 sentences of speaker notes the teacher can say aloud or use as a prompt for discussion. Leave empty if unnecessary.
@@ -107,7 +107,8 @@ def _encode_image(path: Path) -> dict:
 
 
 def _build_user_content(req: GenerateRequest, images: dict[int, Path], capacity: dict) -> list[dict]:
-    lines = []
+    lvl = levels.get(req.level)
+    lines = [f"Audience: {lvl.audience} (level: {lvl.label}).", f"Writing rules for this level: {lvl.guidance}"]
     if req.title and not req.whole_lesson:  # a whole lesson is named after its topic
         lines.append(f"Deck title: {req.title}")
     if req.topic:
@@ -115,8 +116,8 @@ def _build_user_content(req: GenerateRequest, images: dict[int, Path], capacity:
     if req.instructions:
         lines.append(f"Extra instructions from the teacher: {req.instructions}")
     lines.append(
-        f"Limits for this slide style: max {capacity['max_bullets']} bullets per slide, "
-        f"max {capacity['max_words_per_bullet']} words per bullet."
+        f"Limits for this slide style: max {min(capacity['max_bullets'], lvl.max_bullets)} bullets per slide, "
+        f"max {min(capacity['max_words_per_bullet'], lvl.max_words_per_bullet)} words per bullet."
     )
     roles = capacity.get("roles") or {}
     if roles:
