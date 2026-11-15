@@ -1,19 +1,22 @@
-# SlideSmith: an AI copilot for SEN support
+# SlideSmith: an AI learning buddy for pupils with SEN
 
 **Imperial AI Hack 2026 · Reply Challenge: AI on Campus**
 
-An AI copilot for teachers, teaching assistants and SENCOs, focused on **teaching, learning and assessment**.
-It adapts classwork for a pupil's specific needs and runs the assess-plan-do-review cycle on what was tried, so
-pupils with SEN get the right help in lessons now rather than after a long wait. Fewer than half of new EHC plans
-are issued within the 20-week legal limit (46.1% in 2025, DfE).
+A pupil with special educational needs opens their laptop, picks the avatar they like, and it talks them
+through their day: what they'll learn in each period, a visual step-by-step breakdown with symbols, hints
+(not answers) when they're stuck, and the teacher's video when it helps. Their teacher sets each period in
+minutes by typing or uploading slides. Built for independence: less waiting for an adult to say what's next.
 
-It does **not** diagnose, write EHC plans, replace an educational psychologist, or talk to pupils. Every output
-is a draft that a member of staff checks, and records count only once staff approve them.
+Safe for children by design: the avatar only talks about the teacher's plan, shows only teacher-added videos,
+asks nothing personal, and sends anything worrying to the teacher's screen (a rule in code). Pupils are
+stored by code only. Write-up and video script: [docs/HACKATHON.md](docs/HACKATHON.md).
 
 ## What it does
 
 | | |
 |---|---|
+| **My day (pupils)** | `/learn/:id`: pick an avatar (Synthesia on LiveKit); it greets the pupil, explains each period, shows numbered steps with symbols and key words, gives hints not answers, shows teacher-added videos only, and calls the teacher for help or safeguarding. |
+| **Today's lessons (teachers)** | On each pupil's page: periods typed or uploaded as slides; AI turns each into visual steps; help requests appear here. |
 | **Adapt classwork** | Upload a lesson or worksheet (.pptx, .docx, .pdf or text), pick a pupil or a need (autism, speech and language, moderate learning difficulty, dyslexia, ADHD…). Get a printable adapted version with the same objective: one-step instructions, scaffolds, small steps, a word bank, the reasons for each change, and sources. One click turns it into visual supports (Now/Next, steps, key words with symbols). |
 | **Assess-plan-do-review** | A teacher writes a few lines on what they tried. The AI turns it into a structured APDR record with SMART outcomes, provision, who/how often, success criteria and what's still missing. Staff edit and approve it, and it sets the next review date. Earlier records feed the next one, so each cycle builds on the last. |
 | **Grounded answers (RAG)** | Every answer is grounded in the SEND Code of Practice and the school's own documents (provision map, SEN policy, plan outcomes), retrieved with BM25 and cited inline as [C3] / [S2] so staff can check. |
