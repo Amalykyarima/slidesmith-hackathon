@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { errorMessage } from '../../core/api.service';
-import { ApdrRecord, DraftDoc, PupilDetail, RecordRow, SenService, mdToHtml } from '../../core/sen';
+import { ApdrRecord, PupilDetail, RecordRow, SenService } from '../../core/sen';
 import { SourcesList } from '../../shared/sources-list';
 
 interface EditRec {
@@ -23,12 +23,12 @@ interface EditRec {
 
 const lines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean);
 
-/** One pupil: profile, assess-plan-do-review cycle, and drafts for staff to sign. */
+/** One pupil: profile and the assess-plan-do-review cycle. */
 @Component({
   selector: 'app-pupil-page',
   imports: [FormsModule, RouterLink, SourcesList],
   template: `
-    <p class="small"><a routerLink="/sen">← SEN overview</a></p>
+    <p class="small"><a routerLink="/sen">← Pupils</a></p>
     @if (error(); as m) {
       <div class="alert alert-error" role="alert">{{ m }}</div>
     }
@@ -40,7 +40,6 @@ const lines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean);
             <span class="chip">{{ p.status }}</span>
             <span class="chip alt">{{ p.need_area_label }}</span>
             @if (p.next_review) { <span class="chip" [class.bad]="overdue()">Next review {{ p.next_review }}</span> }
-            @if (p.attendance; as a) { <span class="chip" [class.bad]="a.flag === 'persistent'" [class.warn]="a.flag === 'watch'">Attendance {{ a.pct }}%</span> }
           </p>
         </div>
         <a class="btn" routerLink="/adapt" [queryParams]="{ pupil: p.id }">Adapt classwork for {{ p.code }}</a>
@@ -55,9 +54,6 @@ const lines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean);
             <dt>Provision in place</dt>
             <dd>@for (x of p.provision; track x) { <span class="pchip">{{ x }}</span> } @empty { – }</dd>
           </dl>
-          @if (p.attendance?.flag !== 'ok' && p.attendance) {
-            <p class="small pastoral">Pastoral flag: attendance is {{ p.attendance.pct }}%{{ p.attendance.recent_pct !== null ? ', ' + p.attendance.recent_pct + '% in recent weeks' : '' }}. Worth a conversation with the family and the attendance lead.</p>
-          }
         </section>
 
         <section class="card section log">
@@ -107,48 +103,6 @@ const lines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean);
           </div>
         </section>
       }
-
-      <section class="card section">
-        <h2>Drafts for staff to sign</h2>
-        <p class="small muted">Built from {{ p.code }}'s approved records, profile and your provision map. The AI never writes an EHC plan: the local authority does. These are drafts for a human to edit and sign.</p>
-        <div class="row">
-          <button type="button" class="btn" [disabled]="busy()" (click)="draft('support_plan')">SEN support plan</button>
-          <button type="button" class="btn" [disabled]="busy()" (click)="draft('parent_update')">Update for parents</button>
-          <button type="button" class="btn" [disabled]="busy()" (click)="draft('ehcp_contribution')">EHC needs assessment contribution</button>
-          @if (busy() === 'draft') { <span class="small muted"><span class="spinner"></span> Drafting (up to a minute)…</span> }
-        </div>
-        @for (dr of p.drafts; track dr.id) {
-          <article class="doc" [class.signed]="dr.status === 'signed'">
-            <header>
-              <strong>{{ dr.kind_label }}</strong>
-              @if (dr.status === 'signed') { <span class="chip ok">Signed by {{ dr.signed_by }} · {{ dr.signed_at?.slice(0, 10) }}</span> }
-              @else { <span class="chip warn">Draft: needs staff sign-off</span> }
-              <span class="small muted">{{ dr.created_at.slice(0, 16) }}</span>
-            </header>
-            @if (editing() === dr.id) {
-              <textarea class="input mono" rows="16" [ngModel]="body()" (ngModelChange)="body.set($event)"></textarea>
-            } @else {
-              <div class="md" [innerHTML]="html(dr.body)"></div>
-            }
-            @if (dr.status === 'draft') {
-              @if (dr.checks.length) {
-                <details class="checks" open><summary>Check before signing ({{ dr.checks.length }})</summary>
-                  <ul>@for (c of dr.checks; track $index) { <li>{{ c }}</li> }</ul></details>
-              }
-              <app-sources [sources]="dr.sources" />
-              <div class="row sign">
-                @if (editing() === dr.id) {
-                  <button type="button" class="btn btn-sm" (click)="saveEdit(dr)">Save edits</button>
-                } @else {
-                  <button type="button" class="btn btn-sm" (click)="startEdit(dr)">Edit</button>
-                }
-                <input class="input" [ngModel]="signer()" (ngModelChange)="signer.set($event)" placeholder="Your name and role" />
-                <button type="button" class="btn btn-primary btn-sm" [disabled]="!signer().trim()" (click)="sign(dr)">Sign</button>
-              </div>
-            }
-          </article>
-        }
-      </section>
 
       <section class="card section">
         <h2>Assess-plan-do-review history</h2>
@@ -207,13 +161,10 @@ export class PupilPage {
   readonly id = input.required<string>();
   protected readonly p = signal<PupilDetail | null>(null);
   protected readonly error = signal<string | null>(null);
-  protected readonly busy = signal<'' | 'log' | 'draft' | 'approve'>('');
+  protected readonly busy = signal<'' | 'log' | 'approve'>('');
   protected readonly edit = signal<EditRec | null>(null);
   protected readonly pending = signal<RecordRow | null>(null);
-  protected readonly editing = signal<string | null>(null);
   protected readonly note = signal('');
-  protected readonly body = signal('');
-  protected readonly signer = signal('');
 
   ngOnInit(): void {
     void this.load();
@@ -235,9 +186,6 @@ export class PupilPage {
     return !!nr && nr < new Date().toISOString().slice(0, 10);
   }
 
-  protected html(md: string): string {
-    return mdToHtml(md);
-  }
 
   protected async example(): Promise<void> {
     this.note.set((await firstValueFrom(this.sen.demoNote())).note);
@@ -300,45 +248,6 @@ export class PupilPage {
       this.error.set(errorMessage(err));
     } finally {
       this.busy.set('');
-    }
-  }
-
-  protected async draft(kind: DraftDoc['kind']): Promise<void> {
-    this.busy.set('draft');
-    this.error.set(null);
-    try {
-      await firstValueFrom(this.sen.draft(this.id(), kind));
-      await this.load();
-    } catch (err) {
-      this.error.set(errorMessage(err));
-    } finally {
-      this.busy.set('');
-    }
-  }
-
-  protected startEdit(d: DraftDoc): void {
-    this.body.set(d.body);
-    this.editing.set(d.id);
-  }
-
-  protected async saveEdit(d: DraftDoc): Promise<void> {
-    try {
-      await firstValueFrom(this.sen.editDraft(d.id, this.body()));
-      this.editing.set(null);
-      await this.load();
-    } catch (err) {
-      this.error.set(errorMessage(err));
-    }
-  }
-
-  protected async sign(d: DraftDoc): Promise<void> {
-    this.error.set(null);
-    try {
-      await firstValueFrom(this.sen.signDraft(d.id, this.editing() === d.id ? this.body() : d.body, this.signer().trim()));
-      this.editing.set(null);
-      await this.load();
-    } catch (err) {
-      this.error.set(errorMessage(err));
     }
   }
 }
