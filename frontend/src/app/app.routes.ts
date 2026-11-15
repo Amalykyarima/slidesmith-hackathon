@@ -2,7 +2,25 @@ import { Routes } from '@angular/router';
 import { authGuard } from './core/auth.service';
 
 export const routes: Routes = [
-  { path: '', pathMatch: 'full', redirectTo: 'styles' },
+  { path: '', pathMatch: 'full', redirectTo: 'sen' },
+  {
+    path: 'sen',
+    title: 'SEN overview · SlideSmith',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/sen/dashboard.page').then((m) => m.SenDashboardPage),
+  },
+  {
+    path: 'pupils/:id',
+    title: 'Pupil · SlideSmith',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/sen/pupil.page').then((m) => m.PupilPage),
+  },
+  {
+    path: 'adapt',
+    title: 'Adapt classwork · SlideSmith',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/sen/adapt.page').then((m) => m.AdaptPage),
+  },
   {
     path: 'login',
     title: 'Sign in · SlideSmith',
@@ -32,5 +50,5 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./pages/live/live.page').then((m) => m.LivePage),
   },
-  { path: '**', redirectTo: 'styles' },
+  { path: '**', redirectTo: 'sen' },
 ];
