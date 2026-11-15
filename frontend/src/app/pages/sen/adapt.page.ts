@@ -138,6 +138,8 @@ export class AdaptPage {
   private readonly sen = inject(SenService);
   /** ?pupil= from the pupil page */
   readonly pupil = input<string>('');
+  /** ?result= an adaptation made earlier (e.g. by voice with the assistant) */
+  readonly result = input<string>('');
   protected readonly meta = signal<Meta | null>(null);
   protected readonly pupils = signal<Pupil[]>([]);
   protected readonly a = signal<Adaptation | null>(null);
@@ -155,6 +157,9 @@ export class AdaptPage {
       const [meta, pupils] = await Promise.all([firstValueFrom(this.sen.meta()), firstValueFrom(this.sen.pupils())]);
       this.meta.set(meta);
       this.pupils.set(pupils);
+      if (this.result()) {
+        this.a.set(await firstValueFrom(this.sen.adaptation(this.result())));
+      }
       if (this.pupil()) {
         this.pickPupil(this.pupil());
       }

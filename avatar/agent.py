@@ -282,40 +282,101 @@ How to teach:
 
 # --------------------------------------------------------------------------- DEBRIEF mode (SEN assessment)
 class DebriefAgent(Agent):
-    """A spoken lesson debrief for staff: becomes a draft assess-plan-do-review record for approval."""
+    """Sam, the SEN assistant for staff: what works, prepare (adapt), and debrief, all by voice."""
 
     def __init__(self, shared: Shared, pupils: list[dict]):
         roster = "; ".join(f'{p["code"]} ({p["year_group"]}, {p["need_area_label"]}; support: '
                            f'{", ".join(p["provision"][:4]) or "none recorded"})' for p in pupils) or "(no pupils yet)"
-        super().__init__(instructions=f"""You are Sam, a calm, friendly assistant to a school's SEN team, talking with a
-teacher or teaching assistant straight after a lesson. {VOICE_RULES}
-
-Your job: in about a minute, capture what support a pupil with SEN had in the lesson and how it went, so it
-becomes an assess-plan-do-review record that staff will check and approve on screen.
+        super().__init__(instructions=f"""You are Sam, a calm, friendly assistant to a school's SEN team. You talk with
+teachers and teaching assistants (never pupils) before and after lessons. {VOICE_RULES}
 
 Pupils (by code only): {roster}
 
-How to run the debrief:
-1. Ask which pupil it's about. Pupils are known only by their code (for example "Y4-AB"); if the teacher says a
-   name, don't repeat it, and ask for the code instead. Never put a name in a record.
-2. Let them describe what they tried and what happened.
-3. Ask at most three short follow-up questions, one at a time, only about what is missing and useful:
-   the pupil's own view, contact with parents, numbers that show progress (for example tasks finished, time on
-   task), and what they'd try next. Skip any the teacher already answered.
-4. Read back a two-sentence summary and ask if it's right.
-5. When they agree, call log_support with the pupil code and a factual note in the teacher's words (no names).
-   Then say the draft record is on screen to check and approve, and mention anything it still lists as missing.
+You do three jobs. Work out which one from what they say, and switch between them freely:
 
-Rules: never diagnose or suggest a condition; never invent facts; you only draft, a member of staff approves.
-If the teacher mentions a safeguarding concern (a pupil may be at risk of harm), say it must go to the
-designated safeguarding lead now through the school's safeguarding procedure, call flag_for_safeguarding_lead,
-and do not put it in the record.""")
+A) WHAT WORKS: "What's worked for AB?" Call pupil_history with the pupil code, then answer in two or three
+   sentences from the approved records only (what was tried, the numbers, what's still hard). The full
+   record appears on screen. If there are no approved records, say so.
+
+B) PREPARE: "Adapt tomorrow's fractions lesson for AB." Get the pupil code and what the lesson or task is
+   (topic, the task pupils will do, roughly how long). Ask at most two short questions if it's unclear.
+   Then say "Give me about twenty seconds" and call adapt_work. Afterwards say in one sentence what you
+   changed, and that the worksheet is on screen to check, print or turn into visual supports.
+
+C) DEBRIEF, after a lesson: capture what support the pupil had and how it went.
+   Let them describe it, then ask at most three short follow-ups, one at a time, only for what's missing:
+   the pupil's own view, contact with parents, numbers that show progress, what to try next.
+   Read back a two-sentence summary; when they agree, call log_support. Then say the draft record is on
+   screen to check and approve, and mention anything it still lists as missing.
+
+Always: pupils are known only by their code (for example "Y4-AB", which speech may hear as "Y 4 A B"); if
+someone says a name, don't repeat it and ask for the code. Never put a name in anything. Never diagnose or
+suggest a condition, never invent facts; you only draft, a member of staff approves.
+If someone mentions a safeguarding concern (a pupil may be at risk of harm), say it must go to the designated
+safeguarding lead now through the school's procedure, call flag_for_safeguarding_lead, and record nothing.""")
         self.shared = shared
         self.pupils = {p["code"].upper(): p for p in pupils}
 
     async def on_enter(self) -> None:
         await self.shared.publish({"type": "mode", "mode": "debrief"})
-        self.session.generate_reply(instructions="Greet them in one short sentence and ask which pupil the debrief is about.")
+        self.session.generate_reply(instructions=(
+            "Greet them in one short sentence, then ask whether they're preparing a lesson, checking what works for a "
+            "pupil, or debriefing after a lesson."))
+
+    def _find(self, code: str) -> dict | None:
+        key = re.sub(r"[^A-Z0-9]", "", (code or "").upper())
+        for c, p in self.pupils.items():
+            if re.sub(r"[^A-Z0-9]", "", c) == key:
+                return p
+        return None
+
+    @function_tool
+    async def pupil_history(self, context: RunContext, pupil_code: str) -> dict:
+        """What has been tried for a pupil and how it went, from approved records. Use for "what works for...".
+
+        Args:
+            pupil_code: The pupil's code, as listed (for example Y4-AB).
+        """
+        pupil = self._find(pupil_code)
+        if not pupil:
+            return {"status": "error", "detail": f"No pupil with code {pupil_code}. Known codes: {', '.join(self.pupils)}"}
+        await self.shared.publish({"type": "task", "task": "What works", "code": pupil["code"]})
+        detail = await self.shared.backend.get(f"/api/sen/pupils/{pupil['id']}")
+        approved = [r for r in detail["records"] if r["status"] == "approved"][:4]
+        await self.shared.publish({"type": "history", "pupil_id": pupil["id"], "code": pupil["code"]})
+        return {
+            "pupil": pupil["code"], "needs": detail["summary"], "strengths": detail["strengths"],
+            "support_in_place": detail["provision"],
+            "approved_records": [{"date": r["created_at"][:10], "assess": r["record"].get("assess", "")[:400],
+                                  "outcomes": r["record"].get("plan", {}).get("outcomes", [])[:2],
+                                  "do": r["record"].get("do", "")[:300]} for r in approved],
+            "unapproved_drafts": sum(1 for r in detail["records"] if r["status"] != "approved"),
+        }
+
+    @function_tool
+    async def adapt_work(self, context: RunContext, pupil_code: str, subject_and_topic: str, tasks: str) -> dict:
+        """Adapt a lesson's classwork for a pupil. Call once you have the pupil, the topic and the tasks.
+
+        Args:
+            pupil_code: The pupil's code, as listed.
+            subject_and_topic: For example "Year 4 maths: equivalent fractions".
+            tasks: The tasks pupils will do, as the teacher described them, one per line.
+        """
+        pupil = self._find(pupil_code)
+        if not pupil:
+            return {"status": "error", "detail": f"No pupil with code {pupil_code}. Known codes: {', '.join(self.pupils)}"}
+        await self.shared.publish({"type": "task", "task": "Prepare", "code": pupil["code"], "working": True})
+        work = f"{subject_and_topic}\n{tasks}"
+        if len(work) < 20:
+            work += "\n(Short spoken description of the lesson.)"
+        try:
+            out = await self.shared.backend.post("/api/sen/adapt", {"work": work[:6000], "pupil_id": pupil["id"]})
+        except RuntimeError as exc:
+            return {"status": "error", "detail": str(exc)}
+        await self.shared.publish({"type": "adapted", "id": out["id"], "code": pupil["code"]})
+        return {"status": "adapted worksheet is on screen for the teacher to check and print",
+                "title": out.get("title"), "key_changes": [s["strategy"] for s in out.get("strategies", [])][:3],
+                "check": out.get("check", [])[:2]}
 
     @function_tool
     async def log_support(self, context: RunContext, pupil_code: str, note: str) -> dict:
@@ -325,9 +386,10 @@ and do not put it in the record.""")
             pupil_code: The pupil's code, exactly as listed (for example Y4-AB).
             note: What was tried, what happened, the pupil's view, parent contact and next steps, in plain words. No names.
         """
-        pupil = self.pupils.get(pupil_code.strip().upper())
+        pupil = self._find(pupil_code)
         if not pupil:
             return {"status": "error", "detail": f"No pupil with code {pupil_code}. Known codes: {', '.join(self.pupils)}"}
+        await self.shared.publish({"type": "task", "task": "Debrief", "code": pupil["code"], "working": True})
         await self.shared.publish({"type": "logging", "pupil_id": pupil["id"], "code": pupil["code"]})
         try:
             rec = await self.shared.backend.post(f"/api/sen/pupils/{pupil['id']}/records", {"note": note[:4000]})
@@ -383,7 +445,7 @@ async def entrypoint(ctx: JobContext) -> None:
             asyncio.create_task(shared.publish({"type": "escalation", "question": ev.transcript[:300],
                                                 "reason": "safeguarding (detected by rule)"}))
 
-    if meta.get("mode") == "debrief":
+    if meta.get("mode") in ("assistant", "debrief"):
         agent: Agent = DebriefAgent(shared, await backend.get("/api/sen/pupils"))
     elif meta.get("mode") == "present" and meta.get("generation_id"):
         deck = await backend.get(f"/api/generations/{meta['generation_id']}")

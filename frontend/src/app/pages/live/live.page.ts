@@ -5,6 +5,7 @@ import { RouterLink } from '@angular/router';
 import { Room, RoomEvent, Track, type RemoteTrack } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
 import { errorMessage } from '../../core/api.service';
+import { Adaptation, PupilDetail, SenService } from '../../core/sen';
 import { Generation, LevelKey } from '../../core/models';
 import { AgentRun } from '../../shared/agent-run';
 
@@ -23,6 +24,17 @@ interface Escalation {
   answered: boolean;
 }
 
+interface Result {
+  key: number;
+  kind: 'working' | 'adapted' | 'history' | 'record';
+  title?: string;
+  code?: string;
+  id?: string;
+  pupil_id?: string;
+  adaptation?: Adaptation;
+  pupil?: PupilDetail;
+}
+
 /** Text streams (lk.transcription) are installed on the full Room but not on its public type. */
 interface TextStreams {
   registerTextStreamHandler(
@@ -36,10 +48,10 @@ interface TextStreams {
   selector: 'app-live-page',
   imports: [FormsModule, RouterLink, AgentRun],
   template: `
-    <h1>Lesson debrief</h1>
+    <h1>Your SEN assistant</h1>
     <p class="lead">
-      Straight after a lesson, talk to the avatar for a minute about a pupil's support. It asks the follow-up questions a good record needs,
-      then drafts the assess-plan-do-review record for you to check and approve. For staff only: pupils are never on the call.
+      Talk to Sam before and after a lesson. <strong>Prepare</strong>: adapt classwork for a pupil. <strong>What works</strong>: hear what's
+      helped a pupil so far. <strong>Debrief</strong>: one minute after the lesson becomes a record to approve. For staff only: pupils are never on the call.
     </p>
 
     @if (configured() === false) {
@@ -56,21 +68,14 @@ interface TextStreams {
       <section class="card section">
         <div class="modes" role="radiogroup" aria-label="What should the avatar do?">
           <button type="button" role="radio" class="mode" [class.on]="mode() === 'debrief'" [attr.aria-checked]="mode() === 'debrief'" (click)="mode.set('debrief')">
-            <strong>🗣️ Lesson debrief</strong>
-            <span class="muted small">One minute after the lesson. Becomes a draft record to approve.</span>
-          </button>
-          <button type="button" role="radio" class="mode" [class.on]="mode() === 'build'" [attr.aria-checked]="mode() === 'build'" (click)="mode.set('build')">
-            <strong>🎙️ Build a lesson by voice</strong>
-            <span class="muted small">Tell the avatar what you need. It runs the AI team for you.</span>
-          </button>
-          <button type="button" role="radio" class="mode" [class.on]="mode() === 'present'" [attr.aria-checked]="mode() === 'present'" (click)="mode.set('present')">
-            <strong>🧑‍🏫 Present a deck to the class</strong>
-            <span class="muted small">The avatar teaches it and takes questions.</span>
+            <strong>🗣️ SEN assistant</strong>
+            <span class="muted small">Prepare, what works, and debrief, by voice.</span>
           </button>
         </div>
         <div class="stack opts">
           @if (mode() === 'debrief') {
-            <p class="small muted">Refer to pupils by their code (for example "Y4-AB"), never by name. Safeguarding concerns go to your designated safeguarding lead, not here.</p>
+            <p class="small muted">Refer to pupils by their code (for example "Y4-AB"), never by name. Safeguarding concerns go to your designated safeguarding lead, not here.
+              New here? <a routerLink="/sen">Load the demo school</a> on the Pupils page first.</p>
           } @else if (mode() === 'build') {
             <label class="field">
               Usually for
@@ -125,7 +130,7 @@ interface TextStreams {
             @if (!avatarJoined()) {
               <div class="video-wait"><span class="spinner"></span> Waiting for the avatar to join…</div>
             }
-            <span class="live-chip">● Live · {{ live() === 'present' ? 'Presenting' : live() === 'debrief' ? 'Debrief' : 'Building' }}{{ activity() ? ' · ' + activity() : '' }}</span>
+            <span class="live-chip">● Live · {{ live() === 'present' ? 'Presenting' : live() === 'debrief' ? (task() || 'SEN assistant') : 'Building' }}{{ activity() ? ' · ' + activity() : '' }}</span>
           </div>
           <div class="captions" aria-live="polite" aria-label="Captions">
             @for (c of captions(); track c.id) {
@@ -179,24 +184,55 @@ interface TextStreams {
           }
 
           @if (live() === 'debrief') {
-            <section class="card section rec">
-              @if (record(); as r) {
-                @if (r.ready) {
-                  <h3>✅ Draft record for {{ r.code }} is ready</h3>
-                  <p class="small muted">Check it, edit anything, and approve it. It isn't evidence until a member of staff approves it.</p>
-                  <a class="btn btn-primary" [routerLink]="['/pupils', r.pupil_id]" target="_blank">Review and approve</a>
-                } @else {
-                  <h3><span class="spinner"></span> Writing the record for {{ r.code }}…</h3>
+            @for (r of results(); track r.key) {
+              <section class="card section rec">
+                @switch (r.kind) {
+                  @case ('working') {
+                    <h3><span class="spinner"></span> {{ r.title }}</h3>
+                  }
+                  @case ('adapted') {
+                    <span class="tag prep">Prepare · {{ r.code }}</span>
+                    @if (r.adaptation; as a) {
+                      <h3>{{ a.title }}</h3>
+                      <p class="small"><strong>Objective:</strong> {{ a.objective }}</p>
+                      <ol class="small">@for (i of a.instructions.slice(0, 4); track $index) { <li>{{ i.replace(stripNum, '') }}</li> }</ol>
+                      <p class="small muted">Draft: check before use.</p>
+                    }
+                    <a class="btn btn-primary btn-sm" [routerLink]="['/adapt']" [queryParams]="{ result: r.id }" target="_blank">Open, print or make visual supports</a>
+                  }
+                  @case ('history') {
+                    <span class="tag what">What works · {{ r.code }}</span>
+                    <h3>What's worked for {{ r.code }}</h3>
+                    @if (r.pupil; as p) {
+                      <p class="small"><strong>Support in place:</strong> {{ p.provision.join(', ') || 'none recorded' }}</p>
+                      @for (rec of approvedOf(p); track rec.id) {
+                        <div class="small hist">
+                          <strong>{{ rec.created_at.slice(0, 10) }}</strong> · {{ rec.record.do }}
+                          @if (rec.record.plan.outcomes.length) { <br /><em>Aim: {{ rec.record.plan.outcomes[0] }}</em> }
+                        </div>
+                      } @empty { <p class="small muted">No approved records yet.</p> }
+                    }
+                    <p class="small muted">Sam answered from approved records only.</p>
+                    <a class="btn btn-sm" [routerLink]="['/pupils', r.pupil_id]" target="_blank">Open {{ r.code }}'s page</a>
+                  }
+                  @case ('record') {
+                    <span class="tag deb">Debrief · {{ r.code }}</span>
+                    <h3>✅ Draft record for {{ r.code }} is ready</h3>
+                    <p class="small muted">Check it, edit anything, and approve it. It isn't evidence until a member of staff approves it.</p>
+                    <a class="btn btn-primary btn-sm" [routerLink]="['/pupils', r.pupil_id]" target="_blank">Review and approve</a>
+                  }
                 }
-              } @else {
+              </section>
+            } @empty {
+              <section class="card section">
                 <h3>Try saying</h3>
                 <ul class="small says">
-                  <li>“Debrief for Y4-AB.”</li>
-                  <li>“We tried a Now/Next board in maths. He finished three of four tasks, up from one last week.”</li>
-                  <li>“Yes, that's right, log it.”</li>
+                  <li><strong>Prepare:</strong> “I'm teaching equivalent fractions to Year 4 tomorrow. Can you adapt it for Y4-AB?”</li>
+                  <li><strong>What works:</strong> “What's worked for Y4-AB so far?”</li>
+                  <li><strong>Debrief:</strong> “Debrief for Y4-AB. We tried a Now/Next board in maths; he finished three of four tasks.”</li>
                 </ul>
-              }
-            </section>
+              </section>
+            }
           }
           @if (runId(); as id) {
             <app-agent-run [runId]="id" (built)="builtId.set($event.run.generation_id)" />
@@ -243,7 +279,12 @@ interface TextStreams {
     .esc { padding: 10px 0; border-bottom: 1px dashed var(--border); display: flex; flex-direction: column; gap: 6px; }
     .esc.safe { background: #fef2f2; padding: 10px; border-radius: 8px; }
     .esc.done { opacity: 0.5; }
-.rec h3 { display: flex; gap: 8px; align-items: center; }
+.rec { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+    .rec h3 { display: flex; gap: 8px; align-items: center; margin: 0; }
+    .rec ol { margin: 0; padding-left: 18px; }
+    .hist { border-left: 3px solid #fcd34d; padding: 4px 10px; }
+    .tag { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+    .prep { background: #e0f2fe; color: #075985; } .what { background: #fef3c7; color: #92400e; } .deb { background: #ede9fe; color: #5b21b6; }
     .says { padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
     @media (max-width: 900px) { .stage { grid-template-columns: 1fr; } }
   `,
@@ -256,7 +297,22 @@ export class LivePage {
 
   protected readonly configured = signal<boolean | null>(null);
   protected readonly mode = signal<Mode>('debrief');
-  protected readonly record = signal<{ code: string; pupil_id: string; ready: boolean } | null>(null);
+  protected readonly results = signal<Result[]>([]);
+  protected readonly task = signal('');
+  protected readonly stripNum = /^\s*\d+[.)]\s*/;
+  private readonly sen = inject(SenService);
+  private seq = 0;
+
+  protected approvedOf(p: PupilDetail) {
+    return p.records.filter((r) => r.status === 'approved').slice(0, 2);
+  }
+
+  /** Newest first; a finished result replaces the "working" card it belongs to. */
+  private push(r: Omit<Result, 'key'>): Result {
+    const item = { ...r, key: ++this.seq } as Result;
+    this.results.update((list) => [item, ...list.filter((x) => x.kind !== 'working')].slice(0, 6));
+    return item;
+  }
   protected readonly level = signal<LevelKey>('primary');
   protected readonly decks = signal<Generation[]>([]);
   protected readonly deckId = signal('');
@@ -299,7 +355,8 @@ export class LivePage {
     this.escalations.set([]);
     this.runId.set(null);
     this.builtId.set(null);
-    this.record.set(null);
+    this.results.set([]);
+    this.task.set('');
     this.live.set(this.mode());
     try {
       const t = await firstValueFrom(
@@ -375,11 +432,28 @@ export class LivePage {
         if (typeof msg['title'] === 'string') this.deckTitle.set(msg['title']);
         this.slide.set(1);
         break;
-      case 'logging':
-        this.record.set({ code: String(msg['code']), pupil_id: String(msg['pupil_id']), ready: false });
+      case 'task':
+        this.task.set(String(msg['task'] ?? ''));
+        if (msg['working']) this.push({ kind: 'working', title: msg['task'] === 'Prepare' ? `Adapting classwork for ${msg['code']}…` : `Writing the record for ${msg['code']}…` });
         break;
+      case 'adapted': {
+        const item = this.push({ kind: 'adapted', code: String(msg['code']), id: String(msg['id']) });
+        firstValueFrom(this.sen.adaptation(String(msg['id']))).then(
+          (a) => this.results.update((list) => list.map((r) => (r.key === item.key ? { ...r, adaptation: a } : r))),
+          () => undefined,
+        );
+        break;
+      }
+      case 'history': {
+        const item = this.push({ kind: 'history', code: String(msg['code']), pupil_id: String(msg['pupil_id']) });
+        firstValueFrom(this.sen.pupil(String(msg['pupil_id']))).then(
+          (p) => this.results.update((list) => list.map((r) => (r.key === item.key ? { ...r, pupil: p } : r))),
+          () => undefined,
+        );
+        break;
+      }
       case 'record':
-        this.record.set({ code: String(msg['code']), pupil_id: String(msg['pupil_id']), ready: true });
+        this.push({ kind: 'record', code: String(msg['code']), pupil_id: String(msg['pupil_id']) });
         break;
       case 'run':
         this.runId.set(String(msg['run_id']));

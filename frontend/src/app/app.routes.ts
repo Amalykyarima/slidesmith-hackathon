@@ -2,7 +2,7 @@ import { Routes } from '@angular/router';
 import { authGuard } from './core/auth.service';
 
 export const routes: Routes = [
-  { path: '', pathMatch: 'full', redirectTo: 'sen' },
+  { path: '', pathMatch: 'full', redirectTo: 'live' },
   {
     path: 'sen',
     title: 'Pupils · SlideSmith',
@@ -46,7 +46,7 @@ export const routes: Routes = [
   },
   {
     path: 'live',
-    title: 'Live avatar · SlideSmith',
+    title: 'SEN assistant · SlideSmith',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/live/live.page').then((m) => m.LivePage),
   },

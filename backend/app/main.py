@@ -657,7 +657,7 @@ def avatar_token(payload: dict):
 
     from livekit import api as lk
 
-    mode = payload.get("mode") if payload.get("mode") in ("debrief", "build", "present") else "debrief"
+    mode = payload.get("mode") if payload.get("mode") in ("assistant", "debrief", "build", "present") else "assistant"  # debrief = SEN assistant
     meta = {"mode": mode, "owner": owner(), "level": levels.get(payload.get("level")).key}
     if mode == "present":
         gen_id = str(payload.get("generation_id") or "")
