@@ -1,110 +1,87 @@
-# Imperial AI Hack 2026: SlideSmith, an AI copilot for SEN support
+# Imperial AI Hack 2026: SlideSmith
 
-Reply Challenge: **AI on Campus** · Teaching, Learning and Assessment
+Track: **Reply Challenge: AI on Campus** (Teaching, Learning, Assessment) · Bounties: none · Figma: No · Adaption: No
 
 ## Devpost write-up (paste into the form)
 
+**Tagline:** An AI learning buddy that helps pupils with SEN work through their day independently, set up by their teacher in minutes.
+
 ### Inspiration
-I work as a teaching assistant in a secondary school. Every day I see pupils with special educational needs
-handed the same worksheet as everyone else, because adapting it takes time teachers don't have. In England,
-1.32 million pupils are on SEN support without an EHC plan, and fewer than half of new EHC plans are issued
-within the 20-week legal limit (46.1% in 2025). Help in the lesson, this week, is what changes a pupil's
-learning, and the same cycle applies in colleges, where 100,800 young people with EHC plans now study.
+I'm a teaching assistant. Every lesson I see pupils with special educational needs (SEN) waiting for an adult
+to explain, again, what to do next, because a class has one teacher and a TA can't sit with every pupil. In
+England 1.32 million pupils are on SEN support without an EHC plan, and fewer than half of new EHC plans are
+issued within the 20-week legal limit (46.1% in 2025). Most of these pupils get by on whatever help is free in
+the moment. We wanted to give each of them something that helps them get started and keep going on their own.
 
 ### What it does
-SlideSmith is an AI copilot for teachers, teaching assistants and SENCOs, built around teaching, learning and
-assessment.
+**For the pupil: "My day".** A pupil opens their laptop and picks the avatar they like (Mei, Jenny or Kenji).
+It says hello, tells them what they'll learn in each period, and shows a visual breakdown: numbered steps with
+symbols they can tick off, and key words with simple meanings. It listens. When they're stuck it gives a hint
+or a smaller next step, not the answer. It shows a video only if the teacher added one, and it calls the
+teacher when the pupil still needs a grown-up.
 
-- **Teaching: adapt classwork.** Upload a lesson or worksheet and choose a pupil or a need (autism, speech and
-  language, moderate learning difficulty, dyslexia, ADHD). You get a printable version with the same learning
-  objective: one-step instructions, scaffolds, small steps, a word bank, an explanation of every change, and
-  the sources it used.
-- **Learning: visual supports.** One click turns the adapted work into a Now/Next board, step-by-step task
-  cards and key-word cards with consistent symbols, so the pupil can follow and do the work.
-- **Assessment: assess, plan, do, review.** After the lesson, the teacher logs what they tried in a few lines.
-  The AI turns it into a structured record: what was observed, SMART outcomes with a baseline, the support,
-  who and how often, success criteria, and what's still missing. Staff edit and approve it, and it sets the
-  next review. Each cycle builds on the last.
+**For the teacher or TA.** On each pupil's page they set the day's periods in a few minutes: type what the
+pupil will learn and the tasks, or upload the period's slides or worksheet. The AI turns each period into
+the visual step-by-step breakdown. Help requests appear on the teacher's screen. The teacher can also:
+- adapt any lesson or worksheet for a pupil's specific need (autism, speech and language, dyslexia...),
+  grounded in the school's own provision map and the SEND Code of Practice, with sources;
+- talk to a staff assistant avatar ("What's worked for AB?", "Adapt tomorrow's fractions lesson for AB",
+  or a one-minute debrief after the lesson that becomes an assess-plan-do-review record to approve).
 
-- **Sam, the voice assistant, is the front door.** Teachers and TAs open the app and talk to a live avatar:
-  *"What's worked for AB?"* (it answers from approved records only), *"Adapt tomorrow's fractions lesson
-  for AB"* (the adapted worksheet appears on screen), and after the lesson *"Debrief for AB…"* (it asks the
-  follow-ups a good record needs and drafts the record for approval). The whole assess-plan-do-review cycle,
-  by voice, switching between modes from what the teacher says. TAs see the most and write the least; now
-  they can just talk.
-
-- **Learning, independently: "My day".** A pupil with SEN opens their laptop and picks the avatar they like.
-  It greets them, tells them what they'll learn in each period, and shows a visual, step-by-step breakdown
-  with symbols. It listens: it gives hints and the next small step rather than answers, shows a video only if
-  the teacher added one, and calls the teacher when the pupil is stuck. The teacher sets each period in
-  advance by typing it or uploading the slides. The goal is independence: less waiting for an adult to
-  explain what to do next.
-- **Safe for children by design.** The pupil's avatar talks only about the day the teacher set; there's no
-  web search, no videos the teacher didn't add, no personal questions, and anything that sounds like a pupil
-  is unsafe goes straight to the teacher's screen (caught in code, not left to the model).
-
-It does not diagnose or write EHC plans, and it supports teachers rather than replacing them.
+### Safe for children by design
+- The pupil's avatar only talks about the day the teacher set. No web search, no videos the teacher didn't
+  add, no personal questions.
+- Anything that sounds like a pupil may be unsafe goes straight to the teacher's screen; it's caught by a rule
+  in code, not left to the model.
+- Pupils are stored by code or initials only; names, emails and phone numbers are refused or removed before
+  anything reaches the AI.
+- Everything for staff is a draft until a named member of staff approves it.
 
 ### How we built it
 - **Frontend:** Angular 21 (standalone components, signals, zoneless).
-- **Backend:** FastAPI with SQLite session state: pupils, assess-plan-do-review records, school documents.
-- **AI:** Claude through strict tool calls, so every answer is validated JSON in fixed fields (assess,
-  outcomes, provision...) rather than loose prose. Demo mode runs without a key.
-- **RAG:** the SEND Code of Practice (summarised, Open Government Licence) plus the school's uploaded documents,
-  such as its provision map, retrieved with BM25. Every answer cites passages inline ([C3], [S2]) and staff can
-  open each source.
-- **Guardrails, in code:** pupils are stored by code or initials only; full names, emails, phone numbers, pupil
-  numbers and dates of birth are refused or removed before anything reaches the AI; prompt-injection text in
-  uploaded documents is neutralised.
-- **Human in the loop:** every output is a draft; a record counts only once a named member of staff approves it.
-- **Live debrief avatar:** a Synthesia avatar on LiveKit (Cartesia speech, Claude as the brain) with tools that
-  look up pupils by code and create the draft record through the app's API. Safeguarding phrases are caught in
-  code and sent to the screen for the designated safeguarding lead, never into a record.
-- **Also in the box** (from the original SlideSmith): an agent team (Orchestrator, Planner, SEN Adapter,
-  Reviewer) that builds slides in the teacher's own PowerPoint style with a live feed and teacher approval,
-  and a live Synthesia avatar on LiveKit.
-- **Tests:** 110 backend tests.
+- **Backend:** FastAPI with SQLite for session state (pupils, day plans, help requests, records).
+- **AI:** Claude through strict tool calls, so every answer is validated JSON in fixed fields, never loose prose.
+- **Live avatars:** Synthesia interactive avatars on LiveKit, with Cartesia speech and Claude as the brain.
+  Each avatar is a LiveKit agent with tools (show the next lesson, show the teacher's video, call the
+  teacher; or for staff: look up records, adapt a lesson, log a debrief), switching modes from what's said.
+- **Visual supports:** symbols from OpenMoji, matched deterministically, so the same word always gets the same
+  picture (consistency matters to autistic pupils).
+- **RAG:** the SEND Code of Practice (Open Government Licence) plus the school's documents, BM25 retrieval,
+  inline citations.
+- **Tests:** 111 backend tests. Hosted on Render.
 
 ### Challenges
-Keeping AI useful without letting it overreach. The line between "suggests" and "decides" is built into the
-product (staff approval, cited sources, no diagnosis), not just written in a prompt.
+Making a pupil-facing AI safe: we kept it grounded in the teacher's plan, gave it hints-not-answers rules,
+and put the safety checks that matter in code rather than in a prompt.
 
 ### Accomplishments
-A teacher's three-line note becomes a review-ready record with a baseline and SMART outcomes in about 25
-seconds. An adapted worksheet keeps the same objective, uses the school's own provision, builds on the pupil's
-interests, and explains every change.
+A teacher types three lines per lesson, and in about 7 seconds a pupil has a picture-supported plan for the
+whole day and a friendly face to talk them through it.
 
 ### What's next
-A pilot with a primary school and its SENCO, a UK-hosted model deployment, and further education colleges.
+A pilot with a primary school's SEN team; teachers setting the day by voice; and further education colleges,
+where 100,800 young people with EHC plans now study.
 
 ### Built with
-angular, typescript, python, fastapi, claude, anthropic, sqlite, rag, bm25, python-pptx, livekit, synthesia
+angular, typescript, python, fastapi, claude, anthropic, synthesia, livekit, cartesia, sqlite, openmoji, render
 
 ---
 
-## 2-minute video script
+## 2-minute video (organisers' structure)
 
 | Time | Screen | Say |
 |---|---|---|
-| 0:00-0:12 | Assistant page, Sam on screen | "Pupils with special educational needs often get the same worksheet as everyone else, because adapting it takes time teachers don't have. SlideSmith is an AI copilot for teaching, learning and assessment." |
-| 0:12-0:45 | Adapt classwork → pupil Y4-AB → example worksheet → Adapt it | "Here's tomorrow's fractions worksheet, for AB, who is autistic. Same objective, but one-step instructions, a worked example using his love of trains, and a word bank. Every change is explained and cited, from the school's own provision map and the SEND Code of Practice." |
-| 0:45-1:00 | Make visual supports | "One click, and he has a Now/Next board and step cards with symbols, so he can do the work on his own." |
-| 1:00-1:35 | Y4-AB page → example note → Turn into a record → edit one outcome → Approve | "After the lesson, three lines on what worked. It becomes a proper assess-plan-do-review record: SMART outcomes with a baseline, success criteria, and what's still missing. I check it, approve it, and the next review is set." |
-| 1:35-1:50 | Lesson debrief: say "Debrief for Y4-AB…", answer one follow-up, "log it"; Review and approve | "No time to type? The TA just talks to it for a minute after the lesson. It asks what's missing, and the record is waiting for approval. Every point is cited, so nothing is made up." |
-| 1:50-2:00 | Pupils page | "No diagnosis, no pupil chatbot, no names sent to the AI. The right help in the lesson now, in schools and colleges. SlideSmith." |
+| **0:00-0:15** The problem | Pupils page, then Y4-AB | "Pupils with special educational needs often wait for an adult to explain what to do next. SlideSmith gives every one of them a learning buddy, set up by their teacher." |
+| **0:15-0:35** Teacher sets the day | Y4-AB → Today's lessons → edit a period → Save and make visual steps | "The teacher types what AB is learning in each period, or uploads the slides. In seconds each lesson becomes steps with pictures." |
+| **0:35-1:20** Pupil's real run | Open My day → pick Mei → Let's start. Let the avatar greet and explain period 1. Say "I'm stuck on step 2", then "Can I watch the video?" | (Let the avatar talk. Keep your own lines short.) |
+| **1:20-1:30** Teacher sees it | Back to Y4-AB → Help requests → Refresh → "On my way" | "And the teacher knows straight away." |
+| **1:30-1:50** How it's built | README architecture, or the Codespaces terminal | "Claude with strict tool calls, Synthesia avatars on LiveKit, pictures from OpenMoji. The avatar only talks about the teacher's plan, gives hints not answers, and safety checks run in code." |
+| **1:50-2:00** What's new and how often it works | Back to My day | "New: a pupil-facing AI that's grounded, safe and built for SEN. It's worked on every run we did today. SlideSmith." |
 
-Recording tips: load the demo school, run each AI step once before recording so you know the timings (about
-20-30 seconds each), then record and trim the waits.
-
----
-
-## Before you demo: checklist
-
-1. `backend/.env` has `ANTHROPIC_API_KEY`. Never commit it.
-2. Open the app, go to **Pupils** and click **Load demo school**.
-3. The demo school, provision map and pupils are fictional; pupils are codes only.
+Before recording: wake the Render app, click **Load demo school**, start the avatar worker in Codespaces, and
+do one practice run. Upload to YouTube as **Unlisted**.
 
 ## Sources for the numbers
-- 46.1% of new EHC plans issued within 20 weeks in 2025; 100,800 young people with EHC plans in further
-  education (January 2026): DfE, *Education, health and care plans*, 2026.
+- 46.1% of new EHC plans within 20 weeks in 2025; 100,800 young people with EHC plans in further education
+  (January 2026): DfE, *Education, health and care plans*, 2026.
 - 1,319,780 pupils on SEN support (2025/26): DfE, *Special educational needs in England*, 2025/26.
