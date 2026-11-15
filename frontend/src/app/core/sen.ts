@@ -78,6 +78,35 @@ export interface Adaptation {
   pupil_code?: string | null;
 }
 
+export interface Period {
+  n: number;
+  subject: string;
+  time: string;
+  learn: string;
+  video_url: string;
+  video_title: string;
+  breakdown: Supports | null;
+}
+
+export interface DayPlan {
+  pupil_id: string;
+  code: string;
+  phase: string;
+  day: string;
+  periods: Period[];
+}
+
+export interface HelpRequest {
+  id: string;
+  pupil_id: string;
+  code: string;
+  period: number | null;
+  message: string;
+  kind: 'help' | 'safeguarding' | 'finished';
+  seen: number;
+  created_at: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class SenService {
   private readonly http = inject(HttpClient);
@@ -129,6 +158,18 @@ export class SenService {
   }
   deleteDoc(id: string): Observable<unknown> {
     return this.http.delete(`/api/sen/docs/${id}`);
+  }
+  day(pupilId: string): Observable<DayPlan> {
+    return this.http.get<DayPlan>(`/api/sen/pupils/${pupilId}/day`);
+  }
+  saveDay(pupilId: string, periods: Partial<Period>[]): Observable<DayPlan> {
+    return this.http.put<DayPlan>(`/api/sen/pupils/${pupilId}/day`, { periods });
+  }
+  help(): Observable<HelpRequest[]> {
+    return this.http.get<HelpRequest[]>('/api/sen/help');
+  }
+  helpSeen(id: string): Observable<unknown> {
+    return this.http.post(`/api/sen/help/${id}/seen`, {});
   }
   supports(topic: string, details: string, level: string): Observable<Supports> {
     return this.http.post<Supports>('/api/supports', { topic, details, level });

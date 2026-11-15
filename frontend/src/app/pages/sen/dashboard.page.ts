@@ -57,7 +57,8 @@ import { Meta, PupilRow, SenService } from '../../core/sen';
                   <td>@for (x of p.provision.slice(0, 3); track x) { <span class="pchip">{{ x }}</span> }@if (p.provision.length > 3) { <span class="small muted">+{{ p.provision.length - 3 }}</span> }</td>
                   <td class="small nowrap">{{ p.records }}@if (p.last_record) { <br /><span class="muted">last {{ p.last_record }}</span> }</td>
                   <td class="small nowrap">{{ p.next_review || "–" }}</td>
-                  <td><a class="btn btn-sm" routerLink="/adapt" [queryParams]="{ pupil: p.id }" (click)="$event.stopPropagation()">Adapt work</a></td>
+                  <td class="acts"><a class="btn btn-sm btn-primary" [routerLink]="['/learn', p.id]" (click)="$event.stopPropagation()">Open My day</a>
+                    <a class="btn btn-sm" routerLink="/adapt" [queryParams]="{ pupil: p.id }" (click)="$event.stopPropagation()">Adapt work</a></td>
                 </tr>
               }
             </tbody>
@@ -87,6 +88,7 @@ import { Meta, PupilRow, SenService } from '../../core/sen';
     th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 8px; border-bottom: 1px solid var(--border); }
     td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
     td.code, td .btn, td.nowrap { white-space: nowrap; }
+    .acts { display: flex; gap: 6px; }
     tbody tr { cursor: pointer; } tbody tr:hover { background: var(--primary-soft); }
     .pchip { display: inline-block; font-size: 11.5px; padding: 2px 7px; margin: 0 4px 4px 0; border-radius: 6px; background: #f1f5f9; }
     .doc { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 14px; }

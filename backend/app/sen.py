@@ -69,6 +69,7 @@ def init_db() -> None:
     with db.connect() as conn:
         conn.executescript(SCHEMA)
         conn.executescript(kb.SCHEMA)
+        conn.executescript(DAY_SCHEMA)
 
 
 # --------------------------------------------------------------------------- guardrails
@@ -527,10 +528,123 @@ def load_demo():
                         "pupil_voice": "AB likes ticking off each picture.", "parent_contact": "Shared at parents' evening.",
                         "missing": []}), "approved", (today - timedelta(days=40)).isoformat(),
                     (today - timedelta(days=42)).isoformat()))
+    ab = db.one("SELECT id FROM pupils WHERE owner=? AND code='Y4-AB'", (owner(),))
+    if ab and not db.one("SELECT 1 FROM day_plans WHERE owner=? AND pupil_id=? AND day=?", (owner(), ab["id"], _today())):
+        save_day(ab["id"], {"periods": DEMO_DAY})
     return list_pupils()
+
+
+DEMO_DAY = [
+    {"subject": "Maths", "time": "9:00", "learn": "Equivalent fractions. Learn that 1/2 and 2/4 are the same amount.\n"
+     "Look at the fraction strips\nShade half of each shape\nMatch the fractions that are the same\nTell your partner one thing you found",
+     "video_url": "https://www.bbc.co.uk/bitesize/topics/zt9k7ty", "video_title": "BBC Bitesize: fractions"},
+    {"subject": "English", "time": "10:15", "learn": "Writing instructions: how to make a jam sandwich.\n"
+     "Read the example instructions\nUnderline the bossy verbs\nWrite 4 steps of your own\nCheck each step starts with a verb"},
+    {"subject": "Science", "time": "11:30", "learn": "Volcanoes: how they erupt.\n"
+     "Watch the short video\nLabel the magma, crater and lava\nSay what happens when pressure builds up",
+     "video_url": "https://www.bbc.co.uk/bitesize/topics/zkgg87h", "video_title": "BBC Bitesize: rocks and volcanoes"},
+]
 
 
 @router.get("/demo/note")
 def demo_note():
     """A realistic teacher note for the demo (Y4-AB)."""
     return {"code": "Y4-AB", "note": DEMO_PUPILS[0]["note"]}
+
+
+# --------------------------------------------------------------------------- the pupil's day (learning)
+DAY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS day_plans (
+    owner TEXT NOT NULL DEFAULT '', pupil_id TEXT NOT NULL, day TEXT NOT NULL, periods TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (owner, pupil_id, day)
+);
+CREATE TABLE IF NOT EXISTS help_requests (
+    id TEXT PRIMARY KEY, owner TEXT NOT NULL DEFAULT '', pupil_id TEXT NOT NULL, period INTEGER, message TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'help', seen INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+
+def init_day_db() -> None:
+    with db.connect() as conn:
+        conn.executescript(DAY_SCHEMA)
+
+
+def _safe_url(url: str) -> str:
+    url = (url or "").strip()
+    return url[:500] if re.match(r"^https://[\w.-]+\.[a-z]{2,}(/\S*)?$", url, re.I) else ""
+
+
+def _today() -> str:
+    return date.today().isoformat()
+
+
+@router.get("/pupils/{pid}/day")
+def get_day(pid: str, day: str = ""):
+    p = _pupil(pid)
+    d = day or _today()
+    row = db.one("SELECT * FROM day_plans WHERE owner=? AND pupil_id=? AND day=?", (owner(), pid, d))
+    return {"pupil_id": pid, "code": p["code"], "phase": p["phase"], "day": d,
+            "periods": db.loads(row["periods"], []) if row else []}
+
+
+@router.put("/pupils/{pid}/day")
+def save_day(pid: str, payload: dict):
+    """Teacher sets the pupil's periods for a day. Each period gets a visual breakdown made by the AI."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from . import agents
+    from .auth import current_owner
+
+    p = _pupil(pid)
+    d = str(payload.get("day") or _today())[:10]
+    raw = [x for x in (payload.get("periods") or []) if isinstance(x, dict)][:8]
+    who = owner()
+
+    def build(i_x):
+        i, x = i_x
+        current_owner.set(who)
+        subject = _redact(str(x.get("subject", "")).strip())[:80]
+        learn = _redact(str(x.get("learn", "")).strip())[:3000]
+        period = {"n": i + 1, "subject": subject or f"Period {i + 1}", "learn": learn,
+                  "video_url": _safe_url(str(x.get("video_url", ""))), "video_title": str(x.get("video_title", ""))[:120],
+                  "time": str(x.get("time", ""))[:20]}
+        old = x.get("breakdown")
+        if old and not x.get("regenerate") and x.get("learn_unchanged"):
+            period["breakdown"] = old
+        elif learn:
+            try:
+                period["breakdown"] = agents.supports_from_topic(subject, learn, p["phase"])
+            except Exception:  # noqa: BLE001
+                period["breakdown"] = None
+        return period
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        periods = list(pool.map(build, enumerate(raw)))
+    db.run("INSERT INTO day_plans (owner, pupil_id, day, periods) VALUES (?,?,?,?) ON CONFLICT(owner, pupil_id, day) "
+           "DO UPDATE SET periods=excluded.periods, updated_at=datetime('now')", (who, pid, d, db.dumps(periods)))
+    return get_day(pid, d)
+
+
+@router.post("/pupils/{pid}/help")
+def ask_for_help(pid: str, payload: dict):
+    """From the pupil's avatar: 'I'm stuck', or a worry the teacher must see now."""
+    _pupil(pid)
+    kind = payload.get("kind") if payload.get("kind") in ("help", "safeguarding", "finished") else "help"
+    hid = uuid.uuid4().hex[:10]
+    db.run("INSERT INTO help_requests (id, owner, pupil_id, period, message, kind) VALUES (?,?,?,?,?,?)",
+           (hid, owner(), pid, payload.get("period"), _redact(str(payload.get("message", "")))[:300], kind))
+    return {"id": hid}
+
+
+@router.get("/help")
+def list_help():
+    rows = db.many("SELECT h.*, p.code FROM help_requests h JOIN pupils p ON p.id=h.pupil_id "
+                   "WHERE h.owner=? ORDER BY h.created_at DESC LIMIT 30", (owner(),))
+    return rows
+
+
+@router.post("/help/{hid}/seen")
+def help_seen(hid: str):
+    db.run("UPDATE help_requests SET seen=1 WHERE id=? AND owner=?", (hid, owner()))
+    return {"ok": True}

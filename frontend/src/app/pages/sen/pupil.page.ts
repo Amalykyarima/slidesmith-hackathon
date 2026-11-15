@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { errorMessage } from '../../core/api.service';
 import { ApdrRecord, PupilDetail, RecordRow, SenService } from '../../core/sen';
 import { SourcesList } from '../../shared/sources-list';
+import { DayEditor } from '../../shared/day-editor';
 
 interface EditRec {
   id: string;
@@ -26,7 +27,7 @@ const lines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean);
 /** One pupil: profile and the assess-plan-do-review cycle. */
 @Component({
   selector: 'app-pupil-page',
-  imports: [FormsModule, RouterLink, SourcesList],
+  imports: [FormsModule, RouterLink, SourcesList, DayEditor],
   template: `
     <p class="small"><a routerLink="/sen">← Pupils</a></p>
     @if (error(); as m) {
@@ -44,6 +45,8 @@ const lines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean);
         </div>
         <a class="btn" routerLink="/adapt" [queryParams]="{ pupil: p.id }">Adapt classwork for {{ p.code }}</a>
       </div>
+
+      <app-day-editor [pupilId]="p.id" [code]="p.code" />
 
       <div class="grid">
         <section class="card section">

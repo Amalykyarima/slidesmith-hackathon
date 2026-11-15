@@ -60,3 +60,18 @@ def test_kb_search_prefers_school_docs():
         assert any(h["id"].startswith("C") for h in c.get("/api/sen/search", params={"q": "assess plan do review"}).json())
         assert kb.cited("as shown [C3] and [S1]", hits + kb.passages("")[:5])
         _clean(c)
+
+
+def test_pupil_day_and_help():
+    with TestClient(app) as c:
+        _clean(c)
+        pupils = c.post("/api/sen/demo").json()
+        ab = next(p for p in pupils if p["code"] == "Y4-AB")
+        day = c.get(f"/api/sen/pupils/{ab['id']}/day").json()
+        assert len(day["periods"]) == 3 and day["periods"][0]["breakdown"]["task_steps"]
+        saved = c.put(f"/api/sen/pupils/{ab['id']}/day", json={"periods": [
+            {"subject": "PE", "learn": "Throwing and catching\\nWarm up\\nThrow to a partner", "video_url": "javascript:alert(1)"}]}).json()
+        assert saved["periods"][0]["video_url"] == "" and saved["periods"][0]["breakdown"]
+        c.post(f"/api/sen/pupils/{ab['id']}/help", json={"message": "I'm stuck on step 2", "period": 1})
+        assert c.get("/api/sen/help").json()[0]["code"] == "Y4-AB"
+        _clean(c)

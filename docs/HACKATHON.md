@@ -33,7 +33,17 @@ assessment.
   by voice, switching between modes from what the teacher says. TAs see the most and write the least; now
   they can just talk.
 
-It does not diagnose, write EHC plans, replace an educational psychologist, or talk to pupils.
+- **Learning, independently: "My day".** A pupil with SEN opens their laptop and picks the avatar they like.
+  It greets them, tells them what they'll learn in each period, and shows a visual, step-by-step breakdown
+  with symbols. It listens: it gives hints and the next small step rather than answers, shows a video only if
+  the teacher added one, and calls the teacher when the pupil is stuck. The teacher sets each period in
+  advance by typing it or uploading the slides. The goal is independence: less waiting for an adult to
+  explain what to do next.
+- **Safe for children by design.** The pupil's avatar talks only about the day the teacher set; there's no
+  web search, no videos the teacher didn't add, no personal questions, and anything that sounds like a pupil
+  is unsafe goes straight to the teacher's screen (caught in code, not left to the model).
+
+It does not diagnose or write EHC plans, and it supports teachers rather than replacing them.
 
 ### How we built it
 - **Frontend:** Angular 21 (standalone components, signals, zoneless).
