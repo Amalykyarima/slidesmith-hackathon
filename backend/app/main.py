@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from pptx import Presentation
 
-from . import agents, ai, auth, config, db, levels, pictos
+from . import agents, ai, auth, config, db, levels, pictos, sen
 from .auth import owner
 from .generator import build_deck
 from .previews import previews_available, render_into, render_previews
@@ -37,6 +37,7 @@ async def lifespan(_: FastAPI):
     storage.startup()  # bring back saved work before the database is opened
     db.init_db()
     agents.init_db()
+    sen.init_db()
     log.info("AI mode: %s | previews: %s", "claude" if config.AI_ENABLED else "MOCK", previews_available())
     yield
     storage.shutdown()  # last save before the server sleeps
@@ -50,6 +51,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(sen.router)
 app.mount("/files/previews", StaticFiles(directory=config.PREVIEWS_DIR), name="previews")
 app.mount("/files/images", StaticFiles(directory=config.IMAGES_DIR), name="images")
 if pictos.PICTO_DIR.exists():

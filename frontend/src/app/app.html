@@ -8,8 +8,10 @@
 
   @if (auth.signedIn()) {
     <nav aria-label="Main">
-      <a routerLink="/styles" routerLinkActive="active"><span class="step">1</span>Styles</a>
-      <a routerLink="/create" routerLinkActive="active"><span class="step">2</span>Create slides</a>
+      <a routerLink="/sen" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: false }">SEN overview</a>
+      <a routerLink="/adapt" routerLinkActive="active">Adapt classwork</a>
+      <span class="nav-sep" aria-hidden="true">Tools:</span>
+      <a routerLink="/create" routerLinkActive="active">Slides</a>
       <a routerLink="/supports" routerLinkActive="active">🧩 Visual supports</a>
       <a routerLink="/live" routerLinkActive="active">🎙️ Live avatar</a>
     </nav>
