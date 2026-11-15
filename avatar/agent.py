@@ -535,7 +535,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     avatar_id, voice_id = AVATAR_ID, VOICE_ID
     if meta.get("mode") == "pupil":
-        avatar_id, voice_id = PUPIL_AVATARS.get(meta.get("avatar", ""), PUPIL_AVATARS["mei"])
+        avatar_id, voice_id = PUPIL_AVATARS["kenji"]  # one buddy for everyone: Sam
 
     session = AgentSession(
         stt=inference.STT(model="cartesia/ink-2"),
@@ -560,7 +560,7 @@ async def entrypoint(ctx: JobContext) -> None:
     if meta.get("mode") == "pupil":
         pupil = await backend.get(f"/api/sen/pupils/{meta['pupil_id']}")
         day = await backend.get(f"/api/sen/pupils/{meta['pupil_id']}/day")
-        agent: Agent = PupilAgent(shared, day, pupil, name=str(meta.get("avatar", "mei")).capitalize())
+        agent: Agent = PupilAgent(shared, day, pupil, name="Sam")
     elif meta.get("mode") in ("assistant", "debrief"):
         agent = DebriefAgent(shared, await backend.get("/api/sen/pupils"))
     elif meta.get("mode") == "present" and meta.get("generation_id"):
