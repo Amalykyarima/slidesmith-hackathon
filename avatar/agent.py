@@ -1,6 +1,10 @@
-"""SlideSmith Live: a Synthesia avatar on LiveKit that builds lessons by voice and presents them.
+"""SlideSmith Live: a Synthesia avatar on LiveKit for staff.
 
-Two modes, switched mid-conversation (dynamic mode-switching):
+  DEBRIEF  A teacher or TA talks to the avatar for a minute after a lesson. It asks the follow-ups a good
+           record needs (pupil voice, parents, numbers, next step) and creates a draft assess-plan-do-review
+           record that staff check and approve on screen. Pupils by code only; safeguarding goes to the DSL.
+
+Two more modes for slides, switched mid-conversation (dynamic mode-switching):
 
   BUILD    The teacher talks to the avatar: "A Year 4 lesson on volcanoes, 8 slides, with SEN support."
            The avatar confirms the details, then starts SlideSmith's agent team (POST /api/runs).
@@ -275,6 +279,75 @@ How to teach:
         return {"status": "sent to the teacher"}
 
 
+
+# --------------------------------------------------------------------------- DEBRIEF mode (SEN assessment)
+class DebriefAgent(Agent):
+    """A spoken lesson debrief for staff: becomes a draft assess-plan-do-review record for approval."""
+
+    def __init__(self, shared: Shared, pupils: list[dict]):
+        roster = "; ".join(f'{p["code"]} ({p["year_group"]}, {p["need_area_label"]}; support: '
+                           f'{", ".join(p["provision"][:4]) or "none recorded"})' for p in pupils) or "(no pupils yet)"
+        super().__init__(instructions=f"""You are Sam, a calm, friendly assistant to a school's SEN team, talking with a
+teacher or teaching assistant straight after a lesson. {VOICE_RULES}
+
+Your job: in about a minute, capture what support a pupil with SEN had in the lesson and how it went, so it
+becomes an assess-plan-do-review record that staff will check and approve on screen.
+
+Pupils (by code only): {roster}
+
+How to run the debrief:
+1. Ask which pupil it's about. Pupils are known only by their code (for example "Y4-AB"); if the teacher says a
+   name, don't repeat it, and ask for the code instead. Never put a name in a record.
+2. Let them describe what they tried and what happened.
+3. Ask at most three short follow-up questions, one at a time, only about what is missing and useful:
+   the pupil's own view, contact with parents, numbers that show progress (for example tasks finished, time on
+   task), and what they'd try next. Skip any the teacher already answered.
+4. Read back a two-sentence summary and ask if it's right.
+5. When they agree, call log_support with the pupil code and a factual note in the teacher's words (no names).
+   Then say the draft record is on screen to check and approve, and mention anything it still lists as missing.
+
+Rules: never diagnose or suggest a condition; never invent facts; you only draft, a member of staff approves.
+If the teacher mentions a safeguarding concern (a pupil may be at risk of harm), say it must go to the
+designated safeguarding lead now through the school's safeguarding procedure, call flag_for_safeguarding_lead,
+and do not put it in the record.""")
+        self.shared = shared
+        self.pupils = {p["code"].upper(): p for p in pupils}
+
+    async def on_enter(self) -> None:
+        await self.shared.publish({"type": "mode", "mode": "debrief"})
+        self.session.generate_reply(instructions="Greet them in one short sentence and ask which pupil the debrief is about.")
+
+    @function_tool
+    async def log_support(self, context: RunContext, pupil_code: str, note: str) -> dict:
+        """Create the draft assess-plan-do-review record from the debrief. Call only after the teacher agreed the summary.
+
+        Args:
+            pupil_code: The pupil's code, exactly as listed (for example Y4-AB).
+            note: What was tried, what happened, the pupil's view, parent contact and next steps, in plain words. No names.
+        """
+        pupil = self.pupils.get(pupil_code.strip().upper())
+        if not pupil:
+            return {"status": "error", "detail": f"No pupil with code {pupil_code}. Known codes: {', '.join(self.pupils)}"}
+        await self.shared.publish({"type": "logging", "pupil_id": pupil["id"], "code": pupil["code"]})
+        try:
+            rec = await self.shared.backend.post(f"/api/sen/pupils/{pupil['id']}/records", {"note": note[:4000]})
+        except RuntimeError as exc:
+            return {"status": "error", "detail": str(exc)}
+        await self.shared.publish({"type": "record", "pupil_id": pupil["id"], "record_id": rec["id"], "code": pupil["code"]})
+        return {"status": "draft record created, waiting for staff approval on screen",
+                "outcomes": rec["record"].get("plan", {}).get("outcomes", [])[:2],
+                "still_missing": rec["record"].get("missing", [])[:3]}
+
+    @function_tool
+    async def flag_for_safeguarding_lead(self, context: RunContext, summary: str) -> dict:
+        """Show a safeguarding alert on the teacher's screen. Use when a pupil may be at risk of harm.
+
+        Args:
+            summary: One neutral sentence, no names.
+        """
+        await self.shared.publish({"type": "escalation", "question": summary[:300], "reason": "safeguarding"})
+        return {"status": "shown on screen: the teacher must follow the school's safeguarding procedure now"}
+
 # --------------------------------------------------------------------------- session
 def prewarm(proc) -> None:
     if silero is not None:
@@ -310,9 +383,11 @@ async def entrypoint(ctx: JobContext) -> None:
             asyncio.create_task(shared.publish({"type": "escalation", "question": ev.transcript[:300],
                                                 "reason": "safeguarding (detected by rule)"}))
 
-    if meta.get("mode") == "present" and meta.get("generation_id"):
+    if meta.get("mode") == "debrief":
+        agent: Agent = DebriefAgent(shared, await backend.get("/api/sen/pupils"))
+    elif meta.get("mode") == "present" and meta.get("generation_id"):
         deck = await backend.get(f"/api/generations/{meta['generation_id']}")
-        agent: Agent = PresenterAgent(shared, deck)
+        agent = PresenterAgent(shared, deck)
     else:
         styles = await backend.get("/api/styles")
         agent = BuilderAgent(shared, styles)

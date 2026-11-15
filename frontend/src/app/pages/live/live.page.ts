@@ -8,7 +8,7 @@ import { errorMessage } from '../../core/api.service';
 import { Generation, LevelKey } from '../../core/models';
 import { AgentRun } from '../../shared/agent-run';
 
-type Mode = 'build' | 'present';
+type Mode = 'debrief' | 'build' | 'present';
 
 interface Caption {
   id: string;
@@ -36,10 +36,10 @@ interface TextStreams {
   selector: 'app-live-page',
   imports: [FormsModule, RouterLink, AgentRun],
   template: `
-    <h1>SlideSmith Live</h1>
+    <h1>Lesson debrief</h1>
     <p class="lead">
-      Talk to a real-time avatar. Ask it to build a whole lesson and watch the AI team work, then let it present the deck to your class,
-      answer pupils' questions from the slides, and pass anything else to you.
+      Straight after a lesson, talk to the avatar for a minute about a pupil's support. It asks the follow-up questions a good record needs,
+      then drafts the assess-plan-do-review record for you to check and approve. For staff only: pupils are never on the call.
     </p>
 
     @if (configured() === false) {
@@ -55,6 +55,10 @@ interface TextStreams {
     @if (!connected()) {
       <section class="card section">
         <div class="modes" role="radiogroup" aria-label="What should the avatar do?">
+          <button type="button" role="radio" class="mode" [class.on]="mode() === 'debrief'" [attr.aria-checked]="mode() === 'debrief'" (click)="mode.set('debrief')">
+            <strong>🗣️ Lesson debrief</strong>
+            <span class="muted small">One minute after the lesson. Becomes a draft record to approve.</span>
+          </button>
           <button type="button" role="radio" class="mode" [class.on]="mode() === 'build'" [attr.aria-checked]="mode() === 'build'" (click)="mode.set('build')">
             <strong>🎙️ Build a lesson by voice</strong>
             <span class="muted small">Tell the avatar what you need. It runs the AI team for you.</span>
@@ -65,7 +69,9 @@ interface TextStreams {
           </button>
         </div>
         <div class="stack opts">
-          @if (mode() === 'build') {
+          @if (mode() === 'debrief') {
+            <p class="small muted">Refer to pupils by their code (for example "Y4-AB"), never by name. Safeguarding concerns go to your designated safeguarding lead, not here.</p>
+          } @else if (mode() === 'build') {
             <label class="field">
               Usually for
               <select class="input" [ngModel]="level()" (ngModelChange)="level.set($event)">
@@ -119,7 +125,7 @@ interface TextStreams {
             @if (!avatarJoined()) {
               <div class="video-wait"><span class="spinner"></span> Waiting for the avatar to join…</div>
             }
-            <span class="live-chip">● Live · {{ live() === 'present' ? 'Presenting' : 'Building' }}{{ activity() ? ' · ' + activity() : '' }}</span>
+            <span class="live-chip">● Live · {{ live() === 'present' ? 'Presenting' : live() === 'debrief' ? 'Debrief' : 'Building' }}{{ activity() ? ' · ' + activity() : '' }}</span>
           </div>
           <div class="captions" aria-live="polite" aria-label="Captions">
             @for (c of captions(); track c.id) {
@@ -172,6 +178,26 @@ interface TextStreams {
             </section>
           }
 
+          @if (live() === 'debrief') {
+            <section class="card section rec">
+              @if (record(); as r) {
+                @if (r.ready) {
+                  <h3>✅ Draft record for {{ r.code }} is ready</h3>
+                  <p class="small muted">Check it, edit anything, and approve it. It isn't evidence until a member of staff approves it.</p>
+                  <a class="btn btn-primary" [routerLink]="['/pupils', r.pupil_id]" target="_blank">Review and approve</a>
+                } @else {
+                  <h3><span class="spinner"></span> Writing the record for {{ r.code }}…</h3>
+                }
+              } @else {
+                <h3>Try saying</h3>
+                <ul class="small says">
+                  <li>“Debrief for Y4-AB.”</li>
+                  <li>“We tried a Now/Next board in maths. He finished three of four tasks, up from one last week.”</li>
+                  <li>“Yes, that's right, log it.”</li>
+                </ul>
+              }
+            </section>
+          }
           @if (runId(); as id) {
             <app-agent-run [runId]="id" (built)="builtId.set($event.run.generation_id)" />
           } @else if (live() === 'build') {
@@ -217,6 +243,7 @@ interface TextStreams {
     .esc { padding: 10px 0; border-bottom: 1px dashed var(--border); display: flex; flex-direction: column; gap: 6px; }
     .esc.safe { background: #fef2f2; padding: 10px; border-radius: 8px; }
     .esc.done { opacity: 0.5; }
+.rec h3 { display: flex; gap: 8px; align-items: center; }
     .says { padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
     @media (max-width: 900px) { .stage { grid-template-columns: 1fr; } }
   `,
@@ -228,7 +255,8 @@ export class LivePage {
   private audioEls: HTMLMediaElement[] = [];
 
   protected readonly configured = signal<boolean | null>(null);
-  protected readonly mode = signal<Mode>('build');
+  protected readonly mode = signal<Mode>('debrief');
+  protected readonly record = signal<{ code: string; pupil_id: string; ready: boolean } | null>(null);
   protected readonly level = signal<LevelKey>('primary');
   protected readonly decks = signal<Generation[]>([]);
   protected readonly deckId = signal('');
@@ -271,6 +299,7 @@ export class LivePage {
     this.escalations.set([]);
     this.runId.set(null);
     this.builtId.set(null);
+    this.record.set(null);
     this.live.set(this.mode());
     try {
       const t = await firstValueFrom(
@@ -341,10 +370,16 @@ export class LivePage {
     }
     switch (msg['type']) {
       case 'mode':
-        this.live.set(msg['mode'] === 'present' ? 'present' : 'build');
+        this.live.set(msg['mode'] === 'present' ? 'present' : msg['mode'] === 'debrief' ? 'debrief' : 'build');
         if (Array.isArray(msg['previews'])) this.previews.set(msg['previews'] as string[]);
         if (typeof msg['title'] === 'string') this.deckTitle.set(msg['title']);
         this.slide.set(1);
+        break;
+      case 'logging':
+        this.record.set({ code: String(msg['code']), pupil_id: String(msg['pupil_id']), ready: false });
+        break;
+      case 'record':
+        this.record.set({ code: String(msg['code']), pupil_id: String(msg['pupil_id']), ready: true });
         break;
       case 'run':
         this.runId.set(String(msg['run_id']));

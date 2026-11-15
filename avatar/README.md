@@ -15,6 +15,7 @@ Browser (/live) ──► POST /api/avatar/token ──► LiveKit room, dispatc
 
 | Mode | What happens | Tools |
 |---|---|---|
+| **Debrief** (default) | A teacher or TA talks for a minute after a lesson. The avatar asks the follow-ups a good record needs (pupil voice, parents, numbers, next step), reads back a summary, and creates a draft assess-plan-do-review record that staff approve on screen. Pupils by code only; safeguarding concerns are sent to the DSL, never into a record | `log_support`, `flag_for_safeguarding_lead` |
 | Build | The teacher says what she needs. The avatar confirms, starts SlideSmith's agent team, narrates progress, and tells her when the Reviewer escalates something | `create_lesson`, `check_progress`, `present_lesson` (hands off to Present) |
 | Present | The avatar teaches the deck slide by slide, moves the slides on screen and answers questions **from the deck only** | `show_slide`, `set_mode` (present / questions / quiz), `ask_teacher` |
 
