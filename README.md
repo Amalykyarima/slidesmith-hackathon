@@ -1,44 +1,51 @@
-# SlideSmith: an AI teaching team for every classroom
+# SlideSmith: an AI copilot for SEN support
 
-**Imperial AI Hack 2026 · Reply Challenge: AI on Campus (Teaching track)**
+**Imperial AI Hack 2026 · Reply Challenge: AI on Campus**
 
-Teachers and lecturers spend hours every week making slides, and still more adapting them for pupils
-with special educational needs (SEN). SlideSmith gives them a team of AI agents that writes, adapts and
-checks a lesson, a teacher who stays in charge of every decision, and a deck that comes back **in the
-teacher's own PowerPoint style**. It works for **primary, secondary and university**.
+An AI copilot for teachers and SENCOs (special educational needs coordinators). It adapts classwork for a
+specific need, runs the assess-plan-do-review cycle, and turns everyday support into clear evidence, so pupils
+with SEN get help now rather than waiting for an EHC plan. Fewer than half of new EHC plans are issued within the
+20-week legal limit (46.1% in 2025, DfE).
 
-It started as a real tool: a secondary-school teacher asked her teaching assistant (me) to automate her
-daily slides, and the teachers there like it. This hackathon version adds the agent team, SEN visual
-supports and a live avatar.
+It does **not** diagnose, write EHC plans, replace an educational psychologist, or talk to pupils. Every output
+is a draft that a member of staff edits and approves or signs.
 
 ## What it does
 
 | | |
 |---|---|
-| **Agent team, live** | Orchestrator → Guardrails → Planner → SEN Adapter → Reviewer → *you* → Builder. Every step streams to the screen as it happens (server-sent events). |
-| **Mode-switching** | The Orchestrator picks modes per request: whole lesson or polish notes; Primary / Secondary / University (reading level, slide density, review strictness); SEN scaffolding on automatically for primary or when notes mention SEN, ADHD, autism, dyslexia… |
-| **Guardrail pipeline** | In code, before the AI: names, emails, phones, pupil numbers and postcodes are removed; "ignore previous instructions" is neutralised. After the AI: reading level (Flesch-Kincaid), density and personal data are checked again. A second model reviews accuracy, age fit, safeguarding and inclusion. |
-| **Human-in-the-loop escalation** | Anything flagged stops the build and goes to the teacher. She edits or accepts each point. Personal-data blocks can't be waved through. Nothing worrying? The deck builds straight away. |
-| **SEN visual supports** | Now/Next boards, visual timetables, step-by-step task cards and key-word cards with consistent open symbols (OpenMoji). Editable, swappable symbols, coloured backgrounds for dyslexia, large text, print to PDF. Made from the lesson, or on their own in seconds for a TA. |
-| **Live avatar (Synthesia + LiveKit)** | Talk to it to **build a lesson by voice**, then let it **present the deck**: it moves the slides, answers pupils' questions from the deck only, quizzes the class, and sends anything else (and any safeguarding concern, caught in code) to the teacher's inbox. Live captions on both sides. |
-| **Session state** | Every run keeps its state and event log, so the teacher can leave, come back, review and approve. |
-| **Her style, always** | The AI writes text only. Style comes from cloning the teacher's own sample slides (python-pptx): fonts, colours and layouts are hers, never generated. |
+| **Adapt classwork** | Upload a lesson or worksheet (.pptx, .docx, .pdf or text), pick a pupil or a need (autism, speech and language, moderate learning difficulty, dyslexia, ADHD…). Get a printable adapted version with the same objective: one-step instructions, scaffolds, small steps, a word bank, the reasons for each change, and sources. One click turns it into visual supports (Now/Next, steps, key words with symbols). |
+| **Assess-plan-do-review** | A teacher writes a few lines on what they tried. The AI turns it into a structured APDR record with SMART outcomes, provision, who/how often, success criteria and what's still missing. Staff edit and approve it; the review date feeds the dashboard. |
+| **SENCO overview** | Everyone on the register, reviews overdue or due soon, provision in use, records waiting for approval, and a light pastoral flag for attendance (below 90% or dropping). |
+| **Drafts to sign** | SEN support plan, the school's contribution to an EHC needs assessment, and a plain-English update for parents. Built only from approved records and the school's documents; gaps are marked `[to add: ...]` and can't be signed until filled; each comes with a "check before signing" list. |
+| **Grounded answers (RAG)** | Every answer is grounded in the SEND Code of Practice and the school's own documents (provision map, SEN policy, plan outcomes), retrieved with BM25 and cited inline as [C3] / [S2] so staff can check. |
+| **Guardrails** | Pupils are stored by code or initials; full names, emails, phones, pupil numbers and dates of birth are refused or removed before anything reaches the AI; prompt-injection text in uploads is neutralised; school data never trains models. |
+| **Tools** | Slides in the teacher's own PowerPoint style, visual supports, and a live Synthesia avatar (LiveKit), from the original SlideSmith. |
 
 ## Architecture
 
 ```
-Angular 21 (signals, zoneless) ──► FastAPI ──► agents.py  Orchestrator, SEN Adapter, Reviewer (Claude, strict tool calls)
-        │  SSE: /api/runs/{id}/events          ├─► ai.py      Planner (Claude)
-        │                                      ├─► guardrails.py  rule-based checks (no model)
-        │                                      ├─► generator.py   clones her slides, fills text (python-pptx)
-        │                                      └─► pictos.py      OpenMoji symbols, deterministic matching
-        └─► livekit-client ◄──► LiveKit Cloud ◄──► avatar/agent.py  Synthesia avatar · Cartesia STT/TTS · Claude
+Angular 21 (signals, zoneless) ──► FastAPI ──► sen.py       pupils, APDR, adaptations, drafts, dashboard
+                                          ├─► kb.py        RAG: Code of Practice + school docs, BM25, citations
+                                          ├─► guardrails.py personal data + prompt injection (no model)
+                                          ├─► Claude        strict tool calls → validated JSON, never free text
+                                          └─► agents.py, generator.py, pictos.py   slides + visual supports
 ```
+
+The prototype uses Claude through the Anthropic API. For schools, the same design runs on a UK-hosted model
+deployment; the model is one setting.
 
 ## Run it
 
-Backend and frontend as below (no API key = demo mode, the whole flow works offline). The live avatar is
-optional: see [avatar/README.md](avatar/README.md). Write-up and video script: [docs/HACKATHON.md](docs/HACKATHON.md).
+```bash
+cd backend && python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt && cp .env.example .env   # add ANTHROPIC_API_KEY (empty = demo mode)
+uvicorn app.main:app --reload --port 8000
+cd frontend && npm install && npm start                    # http://localhost:4200 → "Load demo school"
+```
+
+Demo data is a fictional school (Oakfield Primary) with pupils identified by codes only.
+Write-up and video script: [docs/HACKATHON.md](docs/HACKATHON.md).
 
 ---
 
