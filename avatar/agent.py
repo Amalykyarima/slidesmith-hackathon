@@ -47,7 +47,7 @@ log = logging.getLogger("slidesmith-avatar")
 
 AGENT_NAME = os.getenv("AVATAR_AGENT_NAME", "slidesmith-avatar")
 AVATAR_ID = os.getenv("SYNTHESIA_AVATAR_ID", "7572faa9-15da-400d-8227-ef1ab8932523")  # Kenji (default)
-VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4")
+VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "b134c304-d095-4d2b-a77a-914f5e8e84e7")  # Sterling: matches Kenji
 LLM_MODEL = os.getenv("AVATAR_LLM_MODEL", "claude-haiku-5-5")
 SLIDESMITH_URL = os.getenv("SLIDESMITH_URL", "http://localhost:8000").rstrip("/")
 AVATAR_SECRET = os.getenv("AVATAR_SECRET", "")
