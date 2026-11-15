@@ -46,6 +46,8 @@ def test_demo_records_and_adapt():
         a = c.post("/api/sen/adapt", json={"work": "Fractions worksheet\nShade half of each shape\nWrite the fraction",
                                            "needs": ["mld"]}).json()
         assert a["draft"] and a["tasks"]
+        assert c.get(f"/api/sen/adaptations/{a['id']}").json()["title"] == a["title"]
+        assert c.get("/api/sen/adaptations/nope").status_code == 404
         _clean(c)
 
 

@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS pupils (
     provision TEXT NOT NULL DEFAULT '[]', next_review TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(owner, code)
 );
+CREATE TABLE IF NOT EXISTS sen_adaptations (
+    id TEXT PRIMARY KEY, owner TEXT NOT NULL DEFAULT '', pupil_id TEXT, data TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS apdr (
     id TEXT PRIMARY KEY, owner TEXT NOT NULL DEFAULT '', pupil_id TEXT NOT NULL, note TEXT NOT NULL,
     record TEXT NOT NULL DEFAULT '{}', sources TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'draft',
@@ -391,7 +395,19 @@ def adapt(payload: dict):
     out["sources"] = kb.cited(db.dumps(out), hits)
     out["needs"] = [n["label"] for n in needs]
     out["draft"] = True
+    out["pupil_code"] = pupil["code"] if pupil else None
+    out["id"] = uuid.uuid4().hex[:10]
+    db.run("INSERT INTO sen_adaptations (id, owner, pupil_id, data) VALUES (?,?,?,?)",
+           (out["id"], owner(), payload.get("pupil_id") or None, db.dumps(out)))
     return out
+
+
+@router.get("/adaptations/{aid}")
+def get_adaptation(aid: str):
+    row = db.one("SELECT * FROM sen_adaptations WHERE id=? AND owner=?", (aid, owner()))
+    if not row:
+        raise HTTPException(404, "That adaptation no longer exists.")
+    return db.loads(row["data"], {})
 
 
 def _mock_adapt(work: str, need_text: str, hits: list[dict]) -> dict:

@@ -74,6 +74,8 @@ export interface Adaptation {
   check: string[];
   sources: Source[];
   needs: string[];
+  id?: string;
+  pupil_code?: string | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -108,6 +110,9 @@ export class SenService {
   }
   approveRecord(id: string, record: ApdrRecord, approved_by: string, review_date: string | null): Observable<RecordRow> {
     return this.http.post<RecordRow>(`/api/sen/records/${id}/approve`, { record, approved_by, review_date });
+  }
+  adaptation(id: string): Observable<Adaptation> {
+    return this.http.get<Adaptation>(`/api/sen/adaptations/${id}`);
   }
   adapt(body: { work: string; needs: string[]; pupil_id?: string; phase?: string }): Observable<Adaptation> {
     return this.http.post<Adaptation>('/api/sen/adapt', body);
