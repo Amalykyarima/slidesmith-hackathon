@@ -435,8 +435,8 @@ def day_text(day: dict) -> str:
 class PupilAgent(Agent):
     """A learning buddy for one pupil with SEN, grounded only in the day the teacher set."""
 
-    def __init__(self, shared: Shared, day: dict, pupil: dict):
-        super().__init__(instructions=f"""You are Sam, a kind, patient learning buddy for a pupil with special educational
+    def __init__(self, shared: Shared, day: dict, pupil: dict, name: str = "Mei"):
+        super().__init__(instructions=f"""You are {name}, a kind, patient learning buddy for a pupil with special educational
 needs ({pupil.get('year_group') or 'primary'}). You help them start and get through today's lessons on their own.
 Talk like a friendly teaching assistant: very short sentences, simple words, one idea at a time, lots of
 encouragement. Never sarcasm or idioms. Wait for them to answer. {VOICE_RULES}
@@ -560,7 +560,7 @@ async def entrypoint(ctx: JobContext) -> None:
     if meta.get("mode") == "pupil":
         pupil = await backend.get(f"/api/sen/pupils/{meta['pupil_id']}")
         day = await backend.get(f"/api/sen/pupils/{meta['pupil_id']}/day")
-        agent: Agent = PupilAgent(shared, day, pupil)
+        agent: Agent = PupilAgent(shared, day, pupil, name=str(meta.get("avatar", "mei")).capitalize())
     elif meta.get("mode") in ("assistant", "debrief"):
         agent = DebriefAgent(shared, await backend.get("/api/sen/pupils"))
     elif meta.get("mode") == "present" and meta.get("generation_id"):
