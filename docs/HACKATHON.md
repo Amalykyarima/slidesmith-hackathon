@@ -5,57 +5,57 @@ Reply Challenge: **AI on Campus** · Teaching, Learning and Assessment
 ## Devpost write-up (paste into the form)
 
 ### Inspiration
-I work as a teaching assistant in a secondary school. I watch teachers and the SENCO spend evenings adapting
-worksheets, writing up support and chasing reviews, while pupils with special educational needs wait. In
-England, 1.32 million pupils are on SEN support without an EHC plan, and fewer than half of new EHC plans are
-issued within the 20-week legal limit (46.1% in 2025). The help a pupil gets in class this week matters more than
-paperwork, and good records of that help are also the evidence a pupil needs if they later need an EHC plan.
+I work as a teaching assistant in a secondary school. Every day I see pupils with special educational needs
+handed the same worksheet as everyone else, because adapting it takes time teachers don't have. In England,
+1.32 million pupils are on SEN support without an EHC plan, and fewer than half of new EHC plans are issued
+within the 20-week legal limit (46.1% in 2025). Help in the lesson, this week, is what changes a pupil's
+learning, and the same cycle applies in colleges, where 100,800 young people with EHC plans now study.
 
 ### What it does
-SlideSmith is an AI copilot for teachers, teaching assistants and SENCOs.
+SlideSmith is an AI copilot for teachers, teaching assistants and SENCOs, built around teaching, learning and
+assessment.
 
-- **Adapt classwork.** Upload a lesson or worksheet and choose a pupil or a need (autism, speech and language,
-  moderate learning difficulty, dyslexia, ADHD). You get a printable version with the same learning objective:
-  one-step instructions, scaffolds, small steps, a word bank, an explanation of every change, and the sources.
-  One click makes visual supports with symbols (Now/Next board, step cards, key words).
-- **Assess, plan, do, review.** A teacher logs what they tried in a few lines. The AI turns it into a structured
-  record with SMART outcomes, provision, who and how often, success criteria and what's still missing. Staff
-  edit and approve it, and its review date feeds the SENCO's dashboard.
-- **SENCO overview.** Everyone on the register, reviews overdue or due soon, provision in use, records waiting
-  for approval, and a light pastoral flag when attendance falls below 90% or is dropping.
-- **Drafts for staff to sign.** A SEN support plan, the school's contribution to an EHC needs assessment, and a
-  plain-English update for parents, built only from approved records and the school's own documents. Gaps
-  are marked "[to add: ...]" and block signing; each draft comes with a list of what to check.
+- **Teaching: adapt classwork.** Upload a lesson or worksheet and choose a pupil or a need (autism, speech and
+  language, moderate learning difficulty, dyslexia, ADHD). You get a printable version with the same learning
+  objective: one-step instructions, scaffolds, small steps, a word bank, an explanation of every change, and
+  the sources it used.
+- **Learning: visual supports.** One click turns the adapted work into a Now/Next board, step-by-step task
+  cards and key-word cards with consistent symbols, so the pupil can follow and do the work.
+- **Assessment: assess, plan, do, review.** After the lesson, the teacher logs what they tried in a few lines.
+  The AI turns it into a structured record: what was observed, SMART outcomes with a baseline, the support,
+  who and how often, success criteria, and what's still missing. Staff edit and approve it, and it sets the
+  next review. Each cycle builds on the last.
 
 It does not diagnose, write EHC plans, replace an educational psychologist, or talk to pupils.
 
 ### How we built it
 - **Frontend:** Angular 21 (standalone components, signals, zoneless).
-- **Backend:** FastAPI with SQLite session state: pupils, APDR records, drafts, attendance, school documents.
-- **AI:** Claude through strict tool calls, so every answer is validated JSON in fixed fields (assess, plan,
-  outcomes...) rather than loose prose. Demo mode runs without a key.
+- **Backend:** FastAPI with SQLite session state: pupils, assess-plan-do-review records, school documents.
+- **AI:** Claude through strict tool calls, so every answer is validated JSON in fixed fields (assess,
+  outcomes, provision...) rather than loose prose. Demo mode runs without a key.
 - **RAG:** the SEND Code of Practice (summarised, Open Government Licence) plus the school's uploaded documents,
-  retrieved with BM25. Every answer cites passages inline ([C3], [S2]) and the teacher can open each source.
+  such as its provision map, retrieved with BM25. Every answer cites passages inline ([C3], [S2]) and staff can
+  open each source.
 - **Guardrails, in code:** pupils are stored by code or initials only; full names, emails, phone numbers, pupil
   numbers and dates of birth are refused or removed before anything reaches the AI; prompt-injection text in
   uploaded documents is neutralised.
-- **Human in the loop:** records count only once a named member of staff approves them; drafts can't be signed
-  until every gap is filled; signed documents are locked.
-- **Agent team** (from the original SlideSmith): Orchestrator, Planner, SEN Adapter and Reviewer agents with a
-  live feed and teacher approval, plus slides in the teacher's own style and a live Synthesia avatar on LiveKit.
+- **Human in the loop:** every output is a draft; a record counts only once a named member of staff approves it.
+- **Also in the box** (from the original SlideSmith): an agent team (Orchestrator, Planner, SEN Adapter,
+  Reviewer) that builds slides in the teacher's own PowerPoint style with a live feed and teacher approval,
+  and a live Synthesia avatar on LiveKit.
 - **Tests:** 110 backend tests.
 
 ### Challenges
-Making AI useful without letting it overreach: the line between "drafts the evidence" and "makes the decision"
-had to be built into the product (approval, sign-off, [to add] gaps, no diagnosis), not just into a prompt.
+Keeping AI useful without letting it overreach. The line between "suggests" and "decides" is built into the
+product (staff approval, cited sources, no diagnosis), not just written in a prompt.
 
 ### Accomplishments
 A teacher's three-line note becomes a review-ready record with a baseline and SMART outcomes in about 25
-seconds. An adapted worksheet keeps the same objective, uses the school's own provision, and explains why.
+seconds. An adapted worksheet keeps the same objective, uses the school's own provision, builds on the pupil's
+interests, and explains every change.
 
 ### What's next
-A pilot with a primary school and its SENCO; a UK-hosted model deployment; MIS integration for attendance
-(Arbor, SIMS); and further education colleges, where 100,800 young people with EHC plans now study.
+A pilot with a primary school and its SENCO, a UK-hosted model deployment, and further education colleges.
 
 ### Built with
 angular, typescript, python, fastapi, claude, anthropic, sqlite, rag, bm25, python-pptx, livekit, synthesia
@@ -66,23 +66,22 @@ angular, typescript, python, fastapi, claude, anthropic, sqlite, rag, bm25, pyth
 
 | Time | Screen | Say |
 |---|---|---|
-| 0:00-0:12 | SEN overview (demo school loaded) | "Fewer than half of EHC plans arrive on time. Meanwhile teachers and SENCOs are buried in adapting work and paperwork. SlideSmith is an AI copilot that gets pupils with SEN help now." |
-| 0:12-0:25 | Point at the tiles and the Y4-AB row | "The SENCO sees everyone on SEN support: reviews overdue, provision in use, and an attendance flag. AB's review is overdue and his attendance is dropping." |
-| 0:25-0:55 | Adapt classwork → pupil Y4-AB → example worksheet → Adapt it | "A teacher uploads tomorrow's fractions worksheet for AB. The same objective, but one-step instructions, a worked example using his love of trains, and a word bank. Every change is explained and cited, from the school's own provision map and the Code of Practice." |
-| 0:55-1:05 | Make visual supports | "One click, and he has a Now/Next board and step cards." |
-| 1:05-1:30 | Pupil page → example note → Turn into a record → Approve | "After the lesson, three lines on what worked. It becomes a proper assess-plan-do-review record with SMART outcomes and a baseline, and it tells me what's still missing. I approve it, and the review date updates." |
-| 1:30-1:50 | Update for parents → show [to add] and the check list | "Drafts for parents, a support plan, or evidence for an EHC needs assessment. Gaps are marked, nothing is invented, and it can't be signed until a human fills them." |
-| 1:50-2:00 | Back to the overview | "No diagnosis, no pupil chatbot, no names sent to the AI. Help now, and evidence that's ready when it's needed. SlideSmith." |
+| 0:00-0:12 | Pupils page (demo school loaded) | "Pupils with special educational needs often get the same worksheet as everyone else, because adapting it takes time teachers don't have. SlideSmith is an AI copilot for teaching, learning and assessment." |
+| 0:12-0:45 | Adapt classwork → pupil Y4-AB → example worksheet → Adapt it | "Here's tomorrow's fractions worksheet, for AB, who is autistic. Same objective, but one-step instructions, a worked example using his love of trains, and a word bank. Every change is explained and cited, from the school's own provision map and the SEND Code of Practice." |
+| 0:45-1:00 | Make visual supports | "One click, and he has a Now/Next board and step cards with symbols, so he can do the work on his own." |
+| 1:00-1:35 | Y4-AB page → example note → Turn into a record → edit one outcome → Approve | "After the lesson, three lines on what worked. It becomes a proper assess-plan-do-review record: SMART outcomes with a baseline, success criteria, and what's still missing. I check it, approve it, and the next review is set." |
+| 1:35-1:50 | Open the sources on the record | "Nothing is made up. Every point is grounded in the school's documents and the Code of Practice, and I can check each one." |
+| 1:50-2:00 | Pupils page | "No diagnosis, no pupil chatbot, no names sent to the AI. The right help in the lesson now, in schools and colleges. SlideSmith." |
 
 Recording tips: load the demo school, run each AI step once before recording so you know the timings (about
-20-30 seconds each; the EHC contribution takes about a minute), then record and trim the waits.
+20-30 seconds each), then record and trim the waits.
 
 ---
 
 ## Before you demo: checklist
 
 1. `backend/.env` has `ANTHROPIC_API_KEY`. Never commit it.
-2. Open the app and click **Load demo school** on the SEN overview.
+2. Open the app, go to **Pupils** and click **Load demo school**.
 3. The demo school, provision map and pupils are fictional; pupils are codes only.
 
 ## Sources for the numbers

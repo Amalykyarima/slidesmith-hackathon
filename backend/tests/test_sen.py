@@ -1,6 +1,4 @@
-"""SEN copilot in demo mode: guardrails on pupil identity, APDR records, drafts, sign-off, dashboard, RAG."""
-import io
-
+"""SEN copilot in demo mode: guardrails on pupil identity, APDR records and approval, adaptation, RAG."""
 from fastapi.testclient import TestClient
 
 from app import kb
@@ -26,37 +24,28 @@ def test_pupils_refuse_names():
         _clean(c)
 
 
-def test_demo_dashboard_records_drafts():
+def test_demo_records_and_adapt():
     with TestClient(app) as c:
         _clean(c)
-        dash = c.post("/api/sen/demo").json()
-        assert dash["counts"]["pupils"] == 5 and dash["counts"]["overdue"] == 1
-        assert dash["counts"]["attendance_flags"] >= 2
-        gh = next(p for p in dash["pupils"] if p["code"] == "Y5-GH")
-        assert gh["attendance"]["flag"] == "persistent"
-        assert c.post("/api/sen/demo").json()["counts"]["pupils"] == 5  # idempotent
+        pupils = c.post("/api/sen/demo").json()
+        assert len(pupils) == 5 and len(c.post("/api/sen/demo").json()) == 5  # idempotent
+        ab = next(p for p in pupils if p["code"] == "Y4-AB")
+        assert ab["records"] == 1
+        for gone in ("/api/sen/dashboard", "/api/sen/attendance"):
+            assert c.get(gone).status_code in (404, 405)
 
-        ab = next(p for p in dash["pupils"] if p["code"] == "Y4-AB")
         note = c.get("/api/sen/demo/note").json()["note"]
         rec = c.post(f"/api/sen/pupils/{ab['id']}/records", json={"note": note}).json()
         assert rec["status"] == "draft" and rec["record"]["plan"]["outcomes"] and rec["review_date"]
         assert c.post(f"/api/sen/records/{rec['id']}/approve", json={}).status_code == 400  # needs a name
         ok = c.post(f"/api/sen/records/{rec['id']}/approve", json={"approved_by": "Ms Patel (SENCO)"}).json()
         assert ok["status"] == "approved"
-        assert c.get(f"/api/sen/pupils/{ab['id']}").json()["next_review"] == rec["review_date"]
-
-        d = c.post(f"/api/sen/pupils/{ab['id']}/drafts", json={"kind": "support_plan"}).json()
-        assert d["status"] == "draft"
-        assert c.post(f"/api/sen/drafts/{d['id']}/sign", json={"signed_by": "Ms Patel"}).status_code == 400  # [to add:]
-        signed = c.post(f"/api/sen/drafts/{d['id']}/sign", json={"signed_by": "Ms Patel", "body": "## Plan\nAgreed."}).json()
-        assert signed["status"] == "signed"
-        assert c.patch(f"/api/sen/drafts/{d['id']}", json={"body": "x"}).status_code == 409
+        detail = c.get(f"/api/sen/pupils/{ab['id']}").json()
+        assert detail["next_review"] == rec["review_date"] and len(detail["records"]) == 2
 
         a = c.post("/api/sen/adapt", json={"work": "Fractions worksheet\nShade half of each shape\nWrite the fraction",
                                            "needs": ["mld"]}).json()
         assert a["draft"] and a["tasks"]
-        csv = b"code,attendance,recent\nY4-CD,89.0,85\n"
-        assert c.post("/api/sen/attendance", files={"file": ("a.csv", io.BytesIO(csv))}).json() == {"rows": 1}
         _clean(c)
 
 

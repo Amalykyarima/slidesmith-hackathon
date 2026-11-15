@@ -5,7 +5,7 @@ export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'sen' },
   {
     path: 'sen',
-    title: 'SEN overview · SlideSmith',
+    title: 'Pupils · SlideSmith',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/sen/dashboard.page').then((m) => m.SenDashboardPage),
   },

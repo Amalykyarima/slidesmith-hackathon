@@ -1,16 +1,16 @@
-"""SEN copilot: adapt classwork, run assess-plan-do-review, and turn everyday support into evidence.
+"""SEN copilot for teaching, learning and assessment: adapt classwork for a pupil's needs, and run the
+assess-plan-do-review cycle on what was tried.
 
 Rules that hold everywhere in this module:
 - Pupils are stored by code or initials only; full names, emails, phone numbers, UPNs and dates of birth
   are refused or removed before anything reaches the AI.
 - Every AI output is grounded in retrieved passages (Code of Practice + the school's own documents) and
   cites them; the teacher sees the sources.
-- Every AI output is a draft. Records, plans and parent updates only count once a member of staff
-  approves or signs them. Nothing here diagnoses, writes an EHC plan, or talks to pupils.
+- Every AI output is a draft. A record only counts once a named member of staff approves it.
+  Nothing here diagnoses or talks to pupils.
 """
 from __future__ import annotations
 
-import csv
 import io
 import re
 import uuid
@@ -43,8 +43,6 @@ NEEDS = [  # specific needs a teacher can adapt for, mapped to the Code's broad 
     {"key": "eal", "label": "EAL (not SEN, but often adapted for)", "area": ""},
 ]
 STATUSES = ["Monitoring", "SEN support", "EHC plan"]
-PERSISTENT_ABSENCE = 90.0  # DfE: missing 10% or more of sessions
-WATCH = 95.0
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pupils (
@@ -59,16 +57,6 @@ CREATE TABLE IF NOT EXISTS apdr (
     record TEXT NOT NULL DEFAULT '{}', sources TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'draft',
     author TEXT NOT NULL DEFAULT '', approved_by TEXT NOT NULL DEFAULT '', review_date TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')), approved_at TEXT
-);
-CREATE TABLE IF NOT EXISTS sen_drafts (
-    id TEXT PRIMARY KEY, owner TEXT NOT NULL DEFAULT '', pupil_id TEXT NOT NULL, kind TEXT NOT NULL,
-    title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', checks TEXT NOT NULL DEFAULT '[]',
-    sources TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'draft', signed_by TEXT NOT NULL DEFAULT '',
-    signed_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE TABLE IF NOT EXISTS attendance (
-    owner TEXT NOT NULL DEFAULT '', code TEXT NOT NULL, pct REAL NOT NULL, recent_pct REAL,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (owner, code)
 );
 """
 
@@ -169,7 +157,16 @@ def meta():
 # --------------------------------------------------------------------------- pupils
 @router.get("/pupils")
 def list_pupils():
-    return [_pupil_out(r) for r in db.many("SELECT * FROM pupils WHERE owner=? ORDER BY code", (owner(),))]
+    counts = {r["pupil_id"]: r for r in db.many(
+        "SELECT pupil_id, COUNT(*) AS n, MAX(created_at) AS last FROM apdr WHERE owner=? GROUP BY pupil_id", (owner(),))}
+    out = []
+    for r in db.many("SELECT * FROM pupils WHERE owner=? ORDER BY code", (owner(),)):
+        p = _pupil_out(r)
+        c = counts.get(p["id"], {})
+        p["records"] = c.get("n", 0)
+        p["last_record"] = (c.get("last") or "")[:10] or None
+        out.append(p)
+    return out
 
 
 @router.post("/pupils", status_code=201)
@@ -192,8 +189,7 @@ def update_pupil(pid: str, payload: dict):
 @router.delete("/pupils/{pid}", status_code=204)
 def delete_pupil(pid: str):
     _pupil(pid)
-    for t in ("apdr", "sen_drafts"):
-        db.run(f"DELETE FROM {t} WHERE pupil_id=? AND owner=?", (pid, owner()))
+    db.run("DELETE FROM apdr WHERE pupil_id=? AND owner=?", (pid, owner()))
     db.run("DELETE FROM pupils WHERE id=? AND owner=?", (pid, owner()))
 
 
@@ -218,10 +214,6 @@ def get_pupil(pid: str):
     p = _pupil(pid)
     p["records"] = [_record_out(r) for r in db.many(
         "SELECT * FROM apdr WHERE pupil_id=? AND owner=? ORDER BY created_at DESC", (pid, owner()))]
-    p["drafts"] = [_draft_out(r) for r in db.many(
-        "SELECT * FROM sen_drafts WHERE pupil_id=? AND owner=? ORDER BY created_at DESC", (pid, owner()))]
-    att = db.one("SELECT * FROM attendance WHERE owner=? AND code=?", (owner(), p["code"]))
-    p["attendance"] = _attendance_out(att) if att else None
     return p
 
 
@@ -415,93 +407,6 @@ def _mock_adapt(work: str, need_text: str, hits: list[dict]) -> dict:
     }
 
 
-# --------------------------------------------------------------------------- drafts for staff to sign
-DRAFT_KINDS = {
-    "support_plan": ("SEN support plan",
-                     "Write a one-page SEN support plan: About me (strengths, what helps), Needs, Outcomes (SMART), "
-                     "Provision (what, who, how often), Review date and how progress will be measured."),
-    "ehcp_contribution": ("School contribution to an EHC needs assessment",
-                          "Write the school's advice and information for an EHC needs assessment: the pupil's needs as seen "
-                          "in school, the action taken through SEN support with dates (from the records), its impact, "
-                          "and what support the school thinks is needed. It is evidence for the local authority, who "
-                          "writes the plan: do not write the plan itself."),
-    "parent_update": ("Update for parents and carers",
-                      "Write a warm, plain-English update for parents and carers (reading age about 11, no jargon or "
-                      "acronyms, explain any term): what support is in place, how it is going, what happens next, when "
-                      "the next review is, and an invitation to share their views. Under 250 words. No citations in "
-                      "the body for this one."),
-}
-
-DRAFT_PROMPT = f"""You draft SEN documents for school staff to edit and sign. Use only what the pupil's records,
-profile and the passages say; where something is missing, write [to add: ...] instead of inventing it.
-Use headings (## ...) and short paragraphs or bullets in Markdown. {GROUNDING}
-List in `check` what staff must verify before signing. Answer by calling submit_draft once."""
-
-DRAFT_TOOL = _strict("submit_draft", "Submit the draft document.", {"title": STR, "body": STR, "check": STRS},
-                     ["title", "body", "check"])
-
-
-def _draft_out(r: dict) -> dict:
-    out = dict(r)
-    out["checks"] = db.loads(r["checks"], [])
-    out["sources"] = db.loads(r["sources"], [])
-    out["kind_label"] = DRAFT_KINDS.get(r["kind"], ("Draft", ""))[0]
-    return out
-
-
-@router.post("/pupils/{pid}/drafts", status_code=201)
-def create_draft(pid: str, payload: dict):
-    p = _pupil(pid)
-    kind = payload.get("kind")
-    if kind not in DRAFT_KINDS:
-        raise HTTPException(400, "Choose a support plan, EHC needs assessment contribution or parent update.")
-    label, ask = DRAFT_KINDS[kind]
-    hits = kb.search(owner(), f"{label} {_needs_text(p)} outcomes provision parents review evidence")
-    att = db.one("SELECT * FROM attendance WHERE owner=? AND code=?", (owner(), p["code"]))
-    if config.AI_ENABLED:
-        user = (f"Write: {label}. {ask}\n\n{_pupil_brief(p)}\n"
-                f"Attendance: {f'{att['pct']:.1f}%' if att else 'not uploaded'}\n"
-                f"Next review: {p['next_review'] or 'not set'}\n\nAssess-plan-do-review records (newest first):\n"
-                f"{_history(pid, 10)}\n\nPassages:\n{kb.context(hits)}")
-        out = _ai(DRAFT_PROMPT, user, DRAFT_TOOL, max_tokens=6000)
-    else:
-        out = {"title": f"{label}: {p['code']}", "body": f"## Needs\n{p['summary'] or '[to add: needs]'}\n\n## Provision\n"
-               + "\n".join(f"- {x}" for x in p["provision"]) + "\n\n## Next steps\n[to add: next steps]",
-               "check": ["Demo mode: add an Anthropic key for a real draft."]}
-    body = _redact(out.get("body", ""))
-    sources = kb.cited(body, hits)
-    did = uuid.uuid4().hex[:10]
-    db.run("INSERT INTO sen_drafts (id, owner, pupil_id, kind, title, body, checks, sources) VALUES (?,?,?,?,?,?,?,?)",
-           (did, owner(), pid, kind, out.get("title", label)[:160], body, db.dumps(out.get("check", [])), db.dumps(sources)))
-    return _draft_out(db.one("SELECT * FROM sen_drafts WHERE id=?", (did,)))
-
-
-@router.post("/drafts/{did}/sign")
-def sign_draft(did: str, payload: dict):
-    r = db.one("SELECT * FROM sen_drafts WHERE id=? AND owner=?", (did, owner()))
-    if not r:
-        raise HTTPException(404, "Draft not found.")
-    by = str(payload.get("signed_by", "")).strip()[:60]
-    if not by:
-        raise HTTPException(400, "Add the name of the member of staff signing this.")
-    body = _redact(str(payload.get("body") if payload.get("body") is not None else r["body"]))
-    if "[to add:" in body:
-        raise HTTPException(400, "Fill in or delete every [to add: ...] before signing.")
-    db.run("UPDATE sen_drafts SET body=?, status='signed', signed_by=?, signed_at=datetime('now') WHERE id=?", (body, by, did))
-    return _draft_out(db.one("SELECT * FROM sen_drafts WHERE id=?", (did,)))
-
-
-@router.patch("/drafts/{did}")
-def edit_draft(did: str, payload: dict):
-    r = db.one("SELECT * FROM sen_drafts WHERE id=? AND owner=?", (did, owner()))
-    if not r:
-        raise HTTPException(404, "Draft not found.")
-    if r["status"] == "signed":
-        raise HTTPException(409, "This draft is signed. Make a new one to change it.")
-    db.run("UPDATE sen_drafts SET body=? WHERE id=?", (_redact(str(payload.get("body", r["body"]))), did))
-    return _draft_out(db.one("SELECT * FROM sen_drafts WHERE id=?", (did,)))
-
-
 # --------------------------------------------------------------------------- school documents (RAG)
 @router.get("/docs")
 def list_docs():
@@ -534,84 +439,6 @@ def delete_doc(did: str):
 @router.get("/search")
 def search(q: str = ""):
     return kb.search(owner(), q)
-
-
-# --------------------------------------------------------------------------- attendance + dashboard
-def _attendance_out(a: dict) -> dict:
-    pct = a["pct"]
-    flag = "persistent" if pct < PERSISTENT_ABSENCE else "watch" if pct < WATCH else "ok"
-    if a.get("recent_pct") is not None and a["recent_pct"] < pct - 3 and flag == "ok":
-        flag = "watch"
-    return {"pct": pct, "recent_pct": a.get("recent_pct"), "flag": flag, "updated_at": a["updated_at"]}
-
-
-@router.post("/attendance")
-async def upload_attendance(file: UploadFile = File(...)):
-    """CSV with columns: code, attendance (percent), optional recent (last 4 weeks, percent)."""
-    text = (await file.read()).decode("utf8", "ignore")
-    rows = list(csv.DictReader(io.StringIO(text)))
-    n = 0
-    for row in rows:
-        keys = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-        code = keys.get("code") or keys.get("pupil") or keys.get("pupil_code")
-        pct = keys.get("attendance") or keys.get("pct") or keys.get("attendance_pct")
-        if not code or not pct:
-            continue
-        try:
-            value = float(pct.rstrip("%"))
-            recent = float(keys["recent"].rstrip("%")) if keys.get("recent") else None
-        except ValueError:
-            continue
-        db.run("INSERT INTO attendance (owner, code, pct, recent_pct) VALUES (?,?,?,?) ON CONFLICT(owner, code) "
-               "DO UPDATE SET pct=excluded.pct, recent_pct=excluded.recent_pct, updated_at=datetime('now')",
-               (owner(), code[:16], value, recent))
-        n += 1
-    if not n:
-        raise HTTPException(400, "No rows read. Use columns: code, attendance, recent (optional).")
-    return {"rows": n}
-
-
-@router.get("/dashboard")
-def dashboard():
-    today = date.today()
-    pupils = list_pupils()
-    att = {a["code"]: _attendance_out(a) for a in db.many("SELECT * FROM attendance WHERE owner=?", (owner(),))}
-    last = {r["pupil_id"]: r for r in db.many(
-        "SELECT pupil_id, MAX(created_at) AS created_at, COUNT(*) AS n, SUM(status='draft') AS drafts FROM apdr "
-        "WHERE owner=? GROUP BY pupil_id", (owner(),))}
-    rows = []
-    for p in pupils:
-        nr = p["next_review"]
-        due = "none"
-        if nr:
-            d = date.fromisoformat(nr[:10])
-            due = "overdue" if d < today else "soon" if d <= today + timedelta(days=14) else "ok"
-        info = last.get(p["id"], {})
-        rows.append({**p, "attendance": att.get(p["code"]), "review_state": due,
-                     "records": info.get("n", 0), "unapproved": info.get("drafts", 0) or 0,
-                     "last_record": (info.get("created_at") or "")[:10] or None})
-    provision: dict[str, int] = {}
-    for p in pupils:
-        for x in p["provision"]:
-            provision[x] = provision.get(x, 0) + 1
-    by_area: dict[str, int] = {}
-    for p in pupils:
-        by_area[p["need_area_label"]] = by_area.get(p["need_area_label"], 0) + 1
-    unsigned = db.one("SELECT COUNT(*) AS n FROM sen_drafts WHERE owner=? AND status='draft'", (owner(),))["n"]
-    return {
-        "pupils": rows,
-        "counts": {
-            "pupils": len(rows), "sen_support": sum(p["status"] == "SEN support" for p in rows),
-            "ehcp": sum(p["status"] == "EHC plan" for p in rows),
-            "overdue": sum(r["review_state"] == "overdue" for r in rows),
-            "soon": sum(r["review_state"] == "soon" for r in rows),
-            "attendance_flags": sum(1 for r in rows if r["attendance"] and r["attendance"]["flag"] != "ok"),
-            "unapproved": sum(r["unapproved"] for r in rows), "unsigned": unsigned,
-        },
-        "by_area": by_area,
-        "provision": sorted(({"name": k, "pupils": v} for k, v in provision.items()), key=lambda x: -x["pupils"]),
-        "docs": list_docs(),
-    }
 
 
 # --------------------------------------------------------------------------- demo data
@@ -660,12 +487,11 @@ DEMO_PUPILS = [
      "strengths": "Very articulate, loves stories read aloud.",
      "provision": ["Coloured overlays", "Precision Teaching"], "review_days": 20},
 ]
-DEMO_ATTENDANCE = {"Y4-AB": (93.5, 88.0), "Y4-CD": (96.8, 97.0), "Y6-EF": (97.2, 98.0), "Y5-GH": (86.4, 82.0), "Y3-JK": (95.1, 95.0)}
 
 
 @router.post("/demo")
 def load_demo():
-    """Fictional pupils, provision map and attendance for a demo. Safe to run twice."""
+    """Fictional pupils and provision map for a demo. Safe to run twice."""
     if not db.one("SELECT id FROM kb_docs WHERE owner=? AND name LIKE 'Oakfield%'", (owner(),)):
         db.run("INSERT INTO kb_docs (id, owner, name, text) VALUES (?,?,?,?)",
                (uuid.uuid4().hex[:10], owner(), "Oakfield provision map 2026-27", DEMO_PROVISION))
@@ -685,10 +511,7 @@ def load_demo():
                         "pupil_voice": "AB likes ticking off each picture.", "parent_contact": "Shared at parents' evening.",
                         "missing": []}), "approved", (today - timedelta(days=40)).isoformat(),
                     (today - timedelta(days=42)).isoformat()))
-    for code, (pct, recent) in DEMO_ATTENDANCE.items():
-        db.run("INSERT INTO attendance (owner, code, pct, recent_pct) VALUES (?,?,?,?) ON CONFLICT(owner, code) "
-               "DO UPDATE SET pct=excluded.pct, recent_pct=excluded.recent_pct", (owner(), code, pct, recent))
-    return dashboard()
+    return list_pupils()
 
 
 @router.get("/demo/note")

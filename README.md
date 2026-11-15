@@ -2,22 +2,20 @@
 
 **Imperial AI Hack 2026 · Reply Challenge: AI on Campus**
 
-An AI copilot for teachers and SENCOs (special educational needs coordinators). It adapts classwork for a
-specific need, runs the assess-plan-do-review cycle, and turns everyday support into clear evidence, so pupils
-with SEN get help now rather than waiting for an EHC plan. Fewer than half of new EHC plans are issued within the
-20-week legal limit (46.1% in 2025, DfE).
+An AI copilot for teachers, teaching assistants and SENCOs, focused on **teaching, learning and assessment**.
+It adapts classwork for a pupil's specific needs and runs the assess-plan-do-review cycle on what was tried, so
+pupils with SEN get the right help in lessons now rather than after a long wait. Fewer than half of new EHC plans
+are issued within the 20-week legal limit (46.1% in 2025, DfE).
 
 It does **not** diagnose, write EHC plans, replace an educational psychologist, or talk to pupils. Every output
-is a draft that a member of staff edits and approves or signs.
+is a draft that a member of staff checks, and records count only once staff approve them.
 
 ## What it does
 
 | | |
 |---|---|
 | **Adapt classwork** | Upload a lesson or worksheet (.pptx, .docx, .pdf or text), pick a pupil or a need (autism, speech and language, moderate learning difficulty, dyslexia, ADHD…). Get a printable adapted version with the same objective: one-step instructions, scaffolds, small steps, a word bank, the reasons for each change, and sources. One click turns it into visual supports (Now/Next, steps, key words with symbols). |
-| **Assess-plan-do-review** | A teacher writes a few lines on what they tried. The AI turns it into a structured APDR record with SMART outcomes, provision, who/how often, success criteria and what's still missing. Staff edit and approve it; the review date feeds the dashboard. |
-| **SENCO overview** | Everyone on the register, reviews overdue or due soon, provision in use, records waiting for approval, and a light pastoral flag for attendance (below 90% or dropping). |
-| **Drafts to sign** | SEN support plan, the school's contribution to an EHC needs assessment, and a plain-English update for parents. Built only from approved records and the school's documents; gaps are marked `[to add: ...]` and can't be signed until filled; each comes with a "check before signing" list. |
+| **Assess-plan-do-review** | A teacher writes a few lines on what they tried. The AI turns it into a structured APDR record with SMART outcomes, provision, who/how often, success criteria and what's still missing. Staff edit and approve it, and it sets the next review date. Earlier records feed the next one, so each cycle builds on the last. |
 | **Grounded answers (RAG)** | Every answer is grounded in the SEND Code of Practice and the school's own documents (provision map, SEN policy, plan outcomes), retrieved with BM25 and cited inline as [C3] / [S2] so staff can check. |
 | **Guardrails** | Pupils are stored by code or initials; full names, emails, phones, pupil numbers and dates of birth are refused or removed before anything reaches the AI; prompt-injection text in uploads is neutralised; school data never trains models. |
 | **Tools** | Slides in the teacher's own PowerPoint style, visual supports, and a live Synthesia avatar (LiveKit), from the original SlideSmith. |
@@ -25,7 +23,7 @@ is a draft that a member of staff edits and approves or signs.
 ## Architecture
 
 ```
-Angular 21 (signals, zoneless) ──► FastAPI ──► sen.py       pupils, APDR, adaptations, drafts, dashboard
+Angular 21 (signals, zoneless) ──► FastAPI ──► sen.py       pupils, adaptations, assess-plan-do-review
                                           ├─► kb.py        RAG: Code of Practice + school docs, BM25, citations
                                           ├─► guardrails.py personal data + prompt injection (no model)
                                           ├─► Claude        strict tool calls → validated JSON, never free text
@@ -41,10 +39,10 @@ deployment; the model is one setting.
 cd backend && python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && cp .env.example .env   # add ANTHROPIC_API_KEY (empty = demo mode)
 uvicorn app.main:app --reload --port 8000
-cd frontend && npm install && npm start                    # http://localhost:4200 → "Load demo school"
+cd frontend && npm install && npm start                    # http://localhost:4200
 ```
 
-Demo data is a fictional school (Oakfield Primary) with pupils identified by codes only.
+Demo data is a fictional school (Oakfield Primary) with pupils identified by codes only. Start on **Pupils → Load demo school**.
 Write-up and video script: [docs/HACKATHON.md](docs/HACKATHON.md).
 
 ---
