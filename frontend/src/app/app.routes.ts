@@ -16,6 +16,12 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/sen/pupil.page').then((m) => m.PupilPage),
   },
   {
+    path: 'learn/:id',
+    title: 'My day · SlideSmith',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/learn/learn.page').then((m) => m.LearnPage),
+  },
+  {
     path: 'adapt',
     title: 'Adapt classwork · SlideSmith',
     canActivate: [authGuard],
