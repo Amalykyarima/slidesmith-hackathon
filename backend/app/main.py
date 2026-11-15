@@ -649,14 +649,15 @@ def avatar_status():
 
 @app.post("/api/avatar/token")
 def avatar_token(payload: dict):
-    """A room for the teacher and the avatar. mode "build": talk to make a lesson; "present": teach a deck."""
+    """A room for staff and the avatar. "debrief": talk after a lesson to draft an assess-plan-do-review record;
+    "build": talk to make a lesson; "present": teach a deck."""
     if not config.AVATAR_ENABLED:
         raise HTTPException(503, "The live avatar isn't set up on this server (LiveKit keys and AVATAR_SECRET).")
     from datetime import timedelta
 
     from livekit import api as lk
 
-    mode = payload.get("mode") if payload.get("mode") in ("build", "present") else "build"
+    mode = payload.get("mode") if payload.get("mode") in ("debrief", "build", "present") else "debrief"
     meta = {"mode": mode, "owner": owner(), "level": levels.get(payload.get("level")).key}
     if mode == "present":
         gen_id = str(payload.get("generation_id") or "")

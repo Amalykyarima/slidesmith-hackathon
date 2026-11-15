@@ -23,7 +23,8 @@ def _claims(token: str) -> dict:
     return jwt.decode(token, options={"verify_signature": False})
 
 
-def test_avatar_off_by_default():
+def test_avatar_off_without_keys(monkeypatch):
+    monkeypatch.setattr(config, "AVATAR_ENABLED", False)
     with TestClient(app) as c:
         assert c.get("/api/avatar").json() == {"configured": False}
         assert c.post("/api/avatar/token", json={"mode": "build"}).status_code == 503
@@ -40,6 +41,9 @@ def test_build_token_dispatches_worker(live):
         meta = json.loads(agents[0]["metadata"])
         assert meta == {"mode": "build", "owner": "", "level": "primary"}
         assert claims["video"]["room"] == body["room"]
+        debrief = c.post("/api/avatar/token", json={"mode": "debrief"}).json()
+        meta2 = json.loads(_claims(debrief["token"])["roomConfig"]["agents"][0]["metadata"])
+        assert meta2["mode"] == "debrief"
         # Presenting needs a deck the teacher owns.
         assert c.post("/api/avatar/token", json={"mode": "present", "generation_id": "nope"}).status_code == 404
 

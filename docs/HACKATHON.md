@@ -26,6 +26,11 @@ assessment.
   who and how often, success criteria, and what's still missing. Staff edit and approve it, and it sets the
   next review. Each cycle builds on the last.
 
+- **Assessment, by voice: lesson debrief.** Straight after a lesson, a teacher or TA talks to a live avatar for
+  a minute. It asks the follow-ups a good record needs (the pupil's view, parents, numbers, next step), reads
+  back a summary, and drafts the record for staff to approve. TAs see the most and write the least; now they
+  can just talk.
+
 It does not diagnose, write EHC plans, replace an educational psychologist, or talk to pupils.
 
 ### How we built it
@@ -40,6 +45,9 @@ It does not diagnose, write EHC plans, replace an educational psychologist, or t
   numbers and dates of birth are refused or removed before anything reaches the AI; prompt-injection text in
   uploaded documents is neutralised.
 - **Human in the loop:** every output is a draft; a record counts only once a named member of staff approves it.
+- **Live debrief avatar:** a Synthesia avatar on LiveKit (Cartesia speech, Claude as the brain) with tools that
+  look up pupils by code and create the draft record through the app's API. Safeguarding phrases are caught in
+  code and sent to the screen for the designated safeguarding lead, never into a record.
 - **Also in the box** (from the original SlideSmith): an agent team (Orchestrator, Planner, SEN Adapter,
   Reviewer) that builds slides in the teacher's own PowerPoint style with a live feed and teacher approval,
   and a live Synthesia avatar on LiveKit.
@@ -70,7 +78,7 @@ angular, typescript, python, fastapi, claude, anthropic, sqlite, rag, bm25, pyth
 | 0:12-0:45 | Adapt classwork → pupil Y4-AB → example worksheet → Adapt it | "Here's tomorrow's fractions worksheet, for AB, who is autistic. Same objective, but one-step instructions, a worked example using his love of trains, and a word bank. Every change is explained and cited, from the school's own provision map and the SEND Code of Practice." |
 | 0:45-1:00 | Make visual supports | "One click, and he has a Now/Next board and step cards with symbols, so he can do the work on his own." |
 | 1:00-1:35 | Y4-AB page → example note → Turn into a record → edit one outcome → Approve | "After the lesson, three lines on what worked. It becomes a proper assess-plan-do-review record: SMART outcomes with a baseline, success criteria, and what's still missing. I check it, approve it, and the next review is set." |
-| 1:35-1:50 | Open the sources on the record | "Nothing is made up. Every point is grounded in the school's documents and the Code of Practice, and I can check each one." |
+| 1:35-1:50 | Lesson debrief: say "Debrief for Y4-AB…", answer one follow-up, "log it"; Review and approve | "No time to type? The TA just talks to it for a minute after the lesson. It asks what's missing, and the record is waiting for approval. Every point is cited, so nothing is made up." |
 | 1:50-2:00 | Pupils page | "No diagnosis, no pupil chatbot, no names sent to the AI. The right help in the lesson now, in schools and colleges. SlideSmith." |
 
 Recording tips: load the demo school, run each AI step once before recording so you know the timings (about
