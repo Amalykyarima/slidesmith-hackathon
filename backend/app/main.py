@@ -657,8 +657,14 @@ def avatar_token(payload: dict):
 
     from livekit import api as lk
 
-    mode = payload.get("mode") if payload.get("mode") in ("assistant", "debrief", "build", "present") else "assistant"  # debrief = SEN assistant
+    mode = payload.get("mode") if payload.get("mode") in ("assistant", "debrief", "build", "present", "pupil") else "assistant"
     meta = {"mode": mode, "owner": owner(), "level": levels.get(payload.get("level")).key}
+    if mode == "pupil":
+        pid = str(payload.get("pupil_id") or "")
+        if not db.one("SELECT id FROM pupils WHERE id=? AND owner=?", (pid, owner())):
+            raise HTTPException(404, "Choose a pupil.")
+        meta["pupil_id"] = pid
+        meta["avatar"] = "kenji"
     if mode == "present":
         gen_id = str(payload.get("generation_id") or "")
         if not db.one("SELECT id FROM generations WHERE id=? AND owner=?", (gen_id, owner())):

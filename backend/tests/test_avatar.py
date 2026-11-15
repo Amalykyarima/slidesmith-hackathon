@@ -57,3 +57,13 @@ def test_worker_signs_in_as_teacher(live, monkeypatch):
         assert c.get("/api/styles", headers={"X-Avatar-Secret": "avatar-secret"}).status_code == 401  # no owner
         ok = c.get("/api/session", headers={"X-Avatar-Secret": "avatar-secret", "X-Owner": "Mrs Khan"})
         assert ok.json()["name"] == "Mrs Khan"
+
+
+def test_pupil_token_carries_pupil(live):
+    with TestClient(app) as c:
+        pupils = c.post("/api/sen/demo").json()
+        ab = next(p for p in pupils if p["code"] == "Y4-AB")
+        body = c.post("/api/avatar/token", json={"mode": "pupil", "pupil_id": ab["id"]}).json()
+        meta = json.loads(_claims(body["token"])["roomConfig"]["agents"][0]["metadata"])
+        assert meta["mode"] == "pupil" and meta["pupil_id"] == ab["id"]
+        assert c.post("/api/avatar/token", json={"mode": "pupil", "pupil_id": "nope"}).status_code == 404
